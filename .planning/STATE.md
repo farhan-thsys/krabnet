@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-24)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 7: Interpretation and Adaptive Tiering
+**Current focus:** Phase 8: Embryonic Frame Discovery
 
 ## Current Position
 
-Phase: 7 of 10 (Interpretation and Adaptive Tiering)
+Phase: 8 of 10 (Embryonic Frame Discovery)
 Plan: 1 of 1 in current phase (COMPLETE)
-Status: Phase 7 complete
-Last activity: 2026-02-24 -- Completed 07-01-PLAN.md (two-tier interpretation and adaptive tiering)
+Status: Phase 8 complete
+Last activity: 2026-02-24 -- Completed 08-01-PLAN.md (embryonic frame discovery with bitvec completion tracking)
 
-Progress: [███████░░░] 70%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
+- Total plans completed: 8
 - Average duration: 4 min
-- Total execution time: 0.45 hours
+- Total execution time: 0.50 hours
 
 **By Phase:**
 
@@ -34,9 +34,10 @@ Progress: [███████░░░] 70%
 | 5 - Frame Materialization | 1 | 2 min | 2 min |
 | 6 - Signal Routing | 1 | 2 min | 2 min |
 | 7 - Interpretation & Adaptive Tiering | 1 | 2 min | 2 min |
+| 8 - Embryonic Frame Discovery | 1 | 3 min | 3 min |
 
 **Recent Trend:**
-- Last 5 plans: 3m, 2m, 2m, 2m, 2m
+- Last 5 plans: 2m, 2m, 2m, 2m, 3m
 - Trend: stable (fast, consistently under 3 min)
 
 *Updated after each plan completion*
@@ -71,6 +72,9 @@ Recent decisions affecting current work:
 - Phase 7: Tests co-located with implementation in interpret.rs and tiering.rs following Rust module convention
 - Phase 7: tier2_analysis takes epoch parameter for temporal snapshot flexibility
 - Phase 7: Scoring uses ln(1+x)/10 capped at 1.0 for log-scaled activity normalization
+- Phase 8: Direction matching simplified for embryonic discovery -- full path tracking deferred to engine orchestration
+- Phase 8: decompose_frame generates sub-patterns shortest-to-longest for consistent ordering
+- Phase 8: Tests co-located with implementation in embryonic.rs following Rust module convention
 
 ### Pending Todos
 
@@ -83,5 +87,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-24
-Stopped at: Completed 07-01-PLAN.md (Phase 7 complete, ready for Phase 8)
+Stopped at: Completed 08-01-PLAN.md (Phase 8 complete, ready for Phase 9)
 Resume file: None

@@ -65,12 +65,12 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Embryonic Frame Discovery
 
-- [ ] **EMBRYO-01**: Pattern templates define multi-hop patterns to watch for with configurable promotion threshold
-- [ ] **EMBRYO-02**: decompose_frame generates all sub-patterns of length >= 2 from a full frame pattern
-- [ ] **EMBRYO-03**: observe_edge detects when new edges extend anchor candidates' partial paths, updating bitvec completion
-- [ ] **EMBRYO-04**: Auto-promotion triggers when candidate completion_ratio meets or exceeds template threshold
-- [ ] **EMBRYO-05**: Stale candidate pruning removes candidates that haven't progressed within configurable epoch window
-- [ ] **EMBRYO-06**: Max candidates cap per template prevents unbounded memory growth
+- [x] **EMBRYO-01**: Pattern templates define multi-hop patterns to watch for with configurable promotion threshold
+- [x] **EMBRYO-02**: decompose_frame generates all sub-patterns of length >= 2 from a full frame pattern
+- [x] **EMBRYO-03**: observe_edge detects when new edges extend anchor candidates' partial paths, updating bitvec completion
+- [x] **EMBRYO-04**: Auto-promotion triggers when candidate completion_ratio meets or exceeds template threshold
+- [x] **EMBRYO-05**: Stale candidate pruning removes candidates that haven't progressed within configurable epoch window
+- [x] **EMBRYO-06**: Max candidates cap per template prevents unbounded memory growth
 
 ### Engine Orchestration
 
@@ -87,7 +87,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **TEST-03**: Graph store tests verify node/edge CRUD, cascading removal, directional neighbors, edge type filtering
 - [x] **TEST-04**: Frame tests verify 2-hop materialization, no-path case, multiple paths, delta application, evict/rematerialize
 - [x] **TEST-05**: Inverted index tests verify register/lookup, affected frames, shared node fan-out, unregister
-- [ ] **TEST-06**: Embryonic tests verify template registration, decomposition, candidate creation, progressive completion, auto-promotion, pruning, cap
+- [x] **TEST-06**: Embryonic tests verify template registration, decomposition, candidate creation, progressive completion, auto-promotion, pruning, cap
 - [ ] **TEST-07**: Integration tests verify full pipeline, retraction pipeline, shared-node multi-frame, embryonic auto-promotion, compaction correctness
 - [ ] **TEST-08**: Snapshot tests verify temporal consistency across frames at specific epochs
 
@@ -173,12 +173,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INTERP-02 | Phase 7 | Complete |
 | TIER-01 | Phase 7 | Complete |
 | TIER-02 | Phase 7 | Complete |
-| EMBRYO-01 | Phase 8 | Pending |
-| EMBRYO-02 | Phase 8 | Pending |
-| EMBRYO-03 | Phase 8 | Pending |
-| EMBRYO-04 | Phase 8 | Pending |
-| EMBRYO-05 | Phase 8 | Pending |
-| EMBRYO-06 | Phase 8 | Pending |
+| EMBRYO-01 | Phase 8 | Complete |
+| EMBRYO-02 | Phase 8 | Complete |
+| EMBRYO-03 | Phase 8 | Complete |
+| EMBRYO-04 | Phase 8 | Complete |
+| EMBRYO-05 | Phase 8 | Complete |
+| EMBRYO-06 | Phase 8 | Complete |
 | ENGINE-01 | Phase 9 | Pending |
 | ENGINE-02 | Phase 9 | Pending |
 | ENGINE-03 | Phase 9 | Pending |
@@ -189,7 +189,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEST-03 | Phase 3 | Complete |
 | TEST-04 | Phase 5 | Complete |
 | TEST-05 | Phase 6 | Complete |
-| TEST-06 | Phase 8 | Pending |
+| TEST-06 | Phase 8 | Complete |
 | TEST-07 | Phase 9 | Pending |
 | TEST-08 | Phase 9 | Pending |
 | BENCH-01 | Phase 10 | Pending |
