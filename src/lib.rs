@@ -24,6 +24,8 @@
 //! - [`fanout`] -- Fan-out limiting with priority-based deferred evaluation
 //! - [`engine`] -- Top-level orchestrator wiring all components into a single pipeline
 //! - [`grpc`] -- gRPC server with 8 RPC methods wrapping the engine
+//! - [`mcp`] -- MCP JSON-RPC 2.0 server with 5 tools over stdio
+//! - [`tier3`] -- Tier 3 LLM integration with bounded channel and mock client
 
 pub mod coalescer;
 pub mod compaction;
@@ -32,6 +34,7 @@ pub mod embryonic;
 pub mod engine;
 pub mod fanout;
 pub mod grpc;
+pub mod mcp;
 pub mod frame;
 pub mod graph;
 pub mod interpret;
@@ -39,6 +42,7 @@ pub mod interner;
 pub mod ring_buffer;
 pub mod routing;
 pub mod sequencer;
+pub mod tier3;
 pub mod tiering;
 pub mod types;
 
@@ -50,10 +54,12 @@ pub use fanout::FanOutLimiter;
 pub use embryonic::EmbryonicDiscovery;
 pub use engine::Engine;
 pub use grpc::KrabnetServer;
+pub use mcp::McpServer;
 pub use frame::Frame;
 pub use graph::Graph;
 pub use interner::Interner;
 pub use ring_buffer::RingBuffer;
 pub use routing::InvertedIndex;
 pub use sequencer::EpochSequencer;
+pub use tier3::{LlmClient, MockLlmClient, Tier3Worker};
 pub use types::*;
