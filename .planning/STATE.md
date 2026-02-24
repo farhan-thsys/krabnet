@@ -94,6 +94,8 @@ Recent decisions affecting current work:
 - Phase 11-02: event_node_id returns source NodeId for edge events
 - [Phase 11]: Used std::sync::{RwLock, Mutex} instead of parking_lot -- GNU toolchain dlltool incompatibility on Windows
 - [Phase 11]: Scoped threads via std::thread::scope for frame evaluation -- zero overhead, automatic lifetime management
+- [Phase 11]: Engine::new() backward compatible (no compaction); Engine::with_compaction() for opt-in background compaction
+- [Phase 11]: Delta updates from scoped threads collected as (frame_id, delta) pairs and merged on main thread
 
 ### Pending Todos
 

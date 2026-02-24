@@ -55,16 +55,16 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### Background Compaction
 
-- [ ] **COMPACT-01**: CompactionWorker runs on dedicated std::thread with crossbeam channel for requests
-- [ ] **COMPACT-02**: Double-buffering: clone DiffCollection, compact clone, atomic swap back via Arc<Mutex<>> (Mutex held only during swap)
-- [ ] **COMPACT-03**: Configurable tuple_count threshold (default: 10,000) triggers automatic compaction requests
-- [ ] **COMPACT-04**: CompactionStats tracks compactions_completed, tuples_before, tuples_after, total_compaction_time_us
+- [x] **COMPACT-01**: CompactionWorker runs on dedicated std::thread with crossbeam channel for requests
+- [x] **COMPACT-02**: Double-buffering: clone DiffCollection, compact clone, atomic swap back via Arc<Mutex<>> (Mutex held only during swap)
+- [x] **COMPACT-03**: Configurable tuple_count threshold (default: 10,000) triggers automatic compaction requests
+- [x] **COMPACT-04**: CompactionStats tracks compactions_completed, tuples_before, tuples_after, total_compaction_time_us
 
 ### Multi-Threaded Frame Evaluation
 
-- [ ] **EVAL-01**: Frame evaluation fans out to thread pool after single-threaded ingestion (graph store remains serialization point)
-- [ ] **EVAL-02**: Frame state wrapped in Arc<parking_lot::RwLock<Frame>> — readers take read locks, evaluators take write locks only for apply_delta
-- [ ] **EVAL-03**: Inverted index lookup stays on main thread; only frame evaluation is parallelized
+- [x] **EVAL-01**: Frame evaluation fans out to thread pool after single-threaded ingestion (graph store remains serialization point)
+- [x] **EVAL-02**: Frame state wrapped in Arc<parking_lot::RwLock<Frame>> — readers take read locks, evaluators take write locks only for apply_delta
+- [x] **EVAL-03**: Inverted index lookup stays on main thread; only frame evaluation is parallelized
 
 ### Mutation Coalescing
 
@@ -273,13 +273,13 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | QUAL-03 | Phase 10 | Complete |
 | QUAL-04 | Phase 10 | Complete |
 | QUAL-05 | Phase 10 | Complete |
-| COMPACT-01 | Phase 11 | Pending |
-| COMPACT-02 | Phase 11 | Pending |
-| COMPACT-03 | Phase 11 | Pending |
-| COMPACT-04 | Phase 11 | Pending |
-| EVAL-01 | Phase 11 | Pending |
-| EVAL-02 | Phase 11 | Pending |
-| EVAL-03 | Phase 11 | Pending |
+| COMPACT-01 | Phase 11 | Complete |
+| COMPACT-02 | Phase 11 | Complete |
+| COMPACT-03 | Phase 11 | Complete |
+| COMPACT-04 | Phase 11 | Complete |
+| EVAL-01 | Phase 11 | Complete |
+| EVAL-02 | Phase 11 | Complete |
+| EVAL-03 | Phase 11 | Complete |
 | COALESCE-01 | Phase 11 | Complete |
 | COALESCE-02 | Phase 11 | Complete |
 | COALESCE-03 | Phase 11 | Complete |
