@@ -93,15 +93,15 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Benchmarks
 
-- [ ] **BENCH-01**: Criterion benchmarks for ingest_event, frame_query, inverted_index_lookup, tier1_check, embryonic_observe, compaction
+- [x] **BENCH-01**: Criterion benchmarks for ingest_event, frame_query, inverted_index_lookup, tier1_check, embryonic_observe, compaction
 
 ### Quality
 
-- [ ] **QUAL-01**: cargo test — zero failures
-- [ ] **QUAL-02**: cargo bench — all benchmarks execute and produce numbers
-- [ ] **QUAL-03**: cargo doc --no-deps — generates documentation without warnings
-- [ ] **QUAL-04**: cargo clippy — zero warnings
-- [ ] **QUAL-05**: Every public function has a doc comment; every module has a module-level doc comment
+- [x] **QUAL-01**: cargo test — zero failures
+- [x] **QUAL-02**: cargo bench — all benchmarks execute and produce numbers
+- [x] **QUAL-03**: cargo doc --no-deps — generates documentation without warnings
+- [x] **QUAL-04**: cargo clippy — zero warnings
+- [x] **QUAL-05**: Every public function has a doc comment; every module has a module-level doc comment
 
 ## v2 Requirements
 
@@ -192,12 +192,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEST-06 | Phase 8 | Complete |
 | TEST-07 | Phase 9 | Complete |
 | TEST-08 | Phase 9 | Complete |
-| BENCH-01 | Phase 10 | Pending |
-| QUAL-01 | Phase 10 | Pending |
-| QUAL-02 | Phase 10 | Pending |
-| QUAL-03 | Phase 10 | Pending |
-| QUAL-04 | Phase 10 | Pending |
-| QUAL-05 | Phase 10 | Pending |
+| BENCH-01 | Phase 10 | Complete |
+| QUAL-01 | Phase 10 | Complete |
+| QUAL-02 | Phase 10 | Complete |
+| QUAL-03 | Phase 10 | Complete |
+| QUAL-04 | Phase 10 | Complete |
+| QUAL-05 | Phase 10 | Complete |
 
 **Coverage:**
 - v1 requirements: 60 total
