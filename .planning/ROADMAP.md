@@ -48,12 +48,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   6. Stress test sustains >50K events/sec for 10 seconds with stable memory (no monotonic increase)
   7. All Phase 1-10 tests still pass; cargo clippy zero warnings
   8. bench_concurrent_ingest benchmark runs and produces throughput numbers
-**Plans**: TBD
+**Plans**: 3 plans (2 waves)
 
 Plans:
-- [ ] 11-01-PLAN.md — Background compaction worker + multi-threaded frame evaluation
-- [ ] 11-02-PLAN.md — Mutation coalescing + fan-out limits + hysteresis
-- [ ] 11-03-PLAN.md — Stress test suite + concurrent ingest benchmark
+- [ ] 11-01-PLAN.md — Background compaction worker + multi-threaded frame evaluation (Wave 1)
+- [ ] 11-02-PLAN.md — Mutation coalescing + fan-out limits + hysteresis (Wave 1)
+- [ ] 11-03-PLAN.md — Stress test suite + concurrent ingest benchmark + quality gates (Wave 2)
 
 ### Phase 12: Production Interface
 **Goal**: Make the engine accessible to external systems and AI agents. Add persistence for crash recovery. Integrate Tier 3 LLM interpretation.
