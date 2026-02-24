@@ -19,8 +19,10 @@
 //! - [`routing`] -- Inverted index for O(affected) event-to-frame routing
 //! - [`interpret`] -- Two-tier signal interpretation (binary + structural)
 //! - [`tiering`] -- Adaptive frame priority scoring and tier recommendation
+//! - [`embryonic`] -- Embryonic frame discovery with bitvec completion tracking
 
 pub mod diff;
+pub mod embryonic;
 pub mod frame;
 pub mod graph;
 pub mod interpret;
@@ -39,4 +41,5 @@ pub use interner::Interner;
 pub use ring_buffer::RingBuffer;
 pub use routing::InvertedIndex;
 pub use sequencer::EpochSequencer;
+pub use embryonic::EmbryonicDiscovery;
 pub use types::*;
