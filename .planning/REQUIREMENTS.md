@@ -27,13 +27,13 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Differential MVCC
 
-- [ ] **DIFF-01**: DiffCollection stores differential tuples (payload, epoch, delta) with +1 for assertion and -1 for retraction
-- [ ] **DIFF-02**: Net delta computation per payload (sum of deltas for matching payloads) is mathematically exact
-- [ ] **DIFF-03**: Aggregate net delta (sum of all deltas across all tuples) tracks frame-level state
-- [ ] **DIFF-04**: Temporal snapshot returns payloads with positive net delta at or before a given epoch
-- [ ] **DIFF-05**: Current state returns snapshot at u64::MAX (effectively "now")
-- [ ] **DIFF-06**: Compaction groups tuples by payload below frontier epoch: annihilates net-zero, collapses survivors, warns on negative net
-- [ ] **DIFF-07**: Tuple count and emptiness queries for memory pressure monitoring
+- [x] **DIFF-01**: DiffCollection stores differential tuples (payload, epoch, delta) with +1 for assertion and -1 for retraction
+- [x] **DIFF-02**: Net delta computation per payload (sum of deltas for matching payloads) is mathematically exact
+- [x] **DIFF-03**: Aggregate net delta (sum of all deltas across all tuples) tracks frame-level state
+- [x] **DIFF-04**: Temporal snapshot returns payloads with positive net delta at or before a given epoch
+- [x] **DIFF-05**: Current state returns snapshot at u64::MAX (effectively "now")
+- [x] **DIFF-06**: Compaction groups tuples by payload below frontier epoch: annihilates net-zero, collapses survivors, warns on negative net
+- [x] **DIFF-07**: Tuple count and emptiness queries for memory pressure monitoring
 
 ### Frame System
 
@@ -82,7 +82,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Testing
 
-- [ ] **TEST-01**: Differential tests verify assert/retract math, annihilation, double-assert, snapshots, compaction, negative delta warning
+- [x] **TEST-01**: Differential tests verify assert/retract math, annihilation, double-assert, snapshots, compaction, negative delta warning
 - [x] **TEST-02**: Ring buffer tests verify push/read, sequential epochs, wraparound, unwritten-returns-none
 - [x] **TEST-03**: Graph store tests verify node/edge CRUD, cascading removal, directional neighbors, edge type filtering
 - [ ] **TEST-04**: Frame tests verify 2-hop materialization, no-path case, multiple paths, delta application, evict/rematerialize
@@ -150,13 +150,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GRAPH-04 | Phase 3 | Complete |
 | GRAPH-05 | Phase 3 | Complete |
 | GRAPH-06 | Phase 3 | Complete |
-| DIFF-01 | Phase 4 | Pending |
-| DIFF-02 | Phase 4 | Pending |
-| DIFF-03 | Phase 4 | Pending |
-| DIFF-04 | Phase 4 | Pending |
-| DIFF-05 | Phase 4 | Pending |
-| DIFF-06 | Phase 4 | Pending |
-| DIFF-07 | Phase 4 | Pending |
+| DIFF-01 | Phase 4 | Complete |
+| DIFF-02 | Phase 4 | Complete |
+| DIFF-03 | Phase 4 | Complete |
+| DIFF-04 | Phase 4 | Complete |
+| DIFF-05 | Phase 4 | Complete |
+| DIFF-06 | Phase 4 | Complete |
+| DIFF-07 | Phase 4 | Complete |
 | FRAME-01 | Phase 5 | Pending |
 | FRAME-02 | Phase 5 | Pending |
 | FRAME-03 | Phase 5 | Pending |
@@ -184,7 +184,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ENGINE-03 | Phase 9 | Pending |
 | ENGINE-04 | Phase 9 | Pending |
 | ENGINE-05 | Phase 9 | Pending |
-| TEST-01 | Phase 4 | Pending |
+| TEST-01 | Phase 4 | Complete |
 | TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 3 | Complete |
 | TEST-04 | Phase 5 | Pending |
