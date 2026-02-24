@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-24)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 5: Frame Materialization
+**Current focus:** Phase 6: Signal Routing
 
 ## Current Position
 
-Phase: 5 of 10 (Frame Materialization)
+Phase: 6 of 10 (Signal Routing)
 Plan: 1 of 1 in current phase (COMPLETE)
-Status: Phase 5 complete
-Last activity: 2026-02-24 -- Completed 05-01-PLAN.md (frame materialization with DFS)
+Status: Phase 6 complete
+Last activity: 2026-02-24 -- Completed 06-01-PLAN.md (inverted index for event-to-frame routing)
 
-Progress: [█████░░░░░] 50%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
-- Average duration: 5 min
-- Total execution time: 0.38 hours
+- Total plans completed: 6
+- Average duration: 4 min
+- Total execution time: 0.42 hours
 
 **By Phase:**
 
@@ -32,9 +32,10 @@ Progress: [█████░░░░░] 50%
 | 3 - Property Graph Storage | 1 | 3 min | 3 min |
 | 4 - Differential MVCC Engine | 1 | 2 min | 2 min |
 | 5 - Frame Materialization | 1 | 2 min | 2 min |
+| 6 - Signal Routing | 1 | 2 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: 13m, 3m, 3m, 2m, 2m
+- Last 5 plans: 3m, 3m, 2m, 2m, 2m
 - Trend: stable (fast, consistently under 3 min)
 
 *Updated after each plan completion*
@@ -63,6 +64,9 @@ Recent decisions affecting current work:
 - Phase 5: Tests co-located with implementation in frame.rs following Rust module convention
 - Phase 5: DFS uses recursive approach with path vector accumulation for clarity
 - Phase 5: Frame starts Cold on creation; tier set externally or by eviction
+- Phase 6: Default trait implemented via delegation to new() for ergonomic construction
+- Phase 6: Tests co-located with implementation in routing.rs following Rust module convention
+- Phase 6: Helper methods collect_by_node/collect_by_edge_key for DRY set-union logic
 
 ### Pending Todos
 
@@ -75,5 +79,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-24
-Stopped at: Completed 05-01-PLAN.md (Phase 5 complete, ready for Phase 6)
+Stopped at: Completed 06-01-PLAN.md (Phase 6 complete, ready for Phase 7)
 Resume file: None

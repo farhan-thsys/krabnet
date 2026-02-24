@@ -48,10 +48,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Signal Routing
 
-- [ ] **ROUTE-01**: Inverted index maps node IDs to sets of frame IDs containing that node
-- [ ] **ROUTE-02**: Inverted index maps (source_node, edge_type) pairs to sets of frame IDs
-- [ ] **ROUTE-03**: affected_frames returns deduplicated union of all frame IDs affected by a given Event
-- [ ] **ROUTE-04**: Frame registration adds to all relevant posting lists; unregistration removes from all
+- [x] **ROUTE-01**: Inverted index maps node IDs to sets of frame IDs containing that node
+- [x] **ROUTE-02**: Inverted index maps (source_node, edge_type) pairs to sets of frame IDs
+- [x] **ROUTE-03**: affected_frames returns deduplicated union of all frame IDs affected by a given Event
+- [x] **ROUTE-04**: Frame registration adds to all relevant posting lists; unregistration removes from all
 
 ### Interpretation
 
@@ -86,7 +86,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **TEST-02**: Ring buffer tests verify push/read, sequential epochs, wraparound, unwritten-returns-none
 - [x] **TEST-03**: Graph store tests verify node/edge CRUD, cascading removal, directional neighbors, edge type filtering
 - [x] **TEST-04**: Frame tests verify 2-hop materialization, no-path case, multiple paths, delta application, evict/rematerialize
-- [ ] **TEST-05**: Inverted index tests verify register/lookup, affected frames, shared node fan-out, unregister
+- [x] **TEST-05**: Inverted index tests verify register/lookup, affected frames, shared node fan-out, unregister
 - [ ] **TEST-06**: Embryonic tests verify template registration, decomposition, candidate creation, progressive completion, auto-promotion, pruning, cap
 - [ ] **TEST-07**: Integration tests verify full pipeline, retraction pipeline, shared-node multi-frame, embryonic auto-promotion, compaction correctness
 - [ ] **TEST-08**: Snapshot tests verify temporal consistency across frames at specific epochs
@@ -165,10 +165,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FRAME-06 | Phase 5 | Complete |
 | FRAME-07 | Phase 5 | Complete |
 | FRAME-08 | Phase 5 | Complete |
-| ROUTE-01 | Phase 6 | Pending |
-| ROUTE-02 | Phase 6 | Pending |
-| ROUTE-03 | Phase 6 | Pending |
-| ROUTE-04 | Phase 6 | Pending |
+| ROUTE-01 | Phase 6 | Complete |
+| ROUTE-02 | Phase 6 | Complete |
+| ROUTE-03 | Phase 6 | Complete |
+| ROUTE-04 | Phase 6 | Complete |
 | INTERP-01 | Phase 7 | Pending |
 | INTERP-02 | Phase 7 | Pending |
 | TIER-01 | Phase 7 | Pending |
@@ -188,7 +188,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 3 | Complete |
 | TEST-04 | Phase 5 | Complete |
-| TEST-05 | Phase 6 | Pending |
+| TEST-05 | Phase 6 | Complete |
 | TEST-06 | Phase 8 | Pending |
 | TEST-07 | Phase 9 | Pending |
 | TEST-08 | Phase 9 | Pending |
