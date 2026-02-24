@@ -34,11 +34,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. String interner accepts strings at initialization and returns stable u32 IDs; reverse lookup from u32 to &str works for all interned strings
   3. Interning the same string twice returns the same u32 ID
   4. No heap allocation occurs after interner initialization is complete (all strings pre-allocated in arena)
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
+- [ ] 01-01-PLAN.md — Create crate scaffold, core types module, and string interner with tests
 
 ### Phase 2: Epoch Sequencer and Ring Buffer
 **Goal**: Events can be ingested into a lock-free ring buffer with globally unique monotonic epoch assignment
