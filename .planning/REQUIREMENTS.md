@@ -1,0 +1,150 @@
+# Requirements: Krabnet
+
+**Defined:** 2026-02-24
+**Core Value:** When a signal arrives, decision-relevant context is already materialized — zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
+
+## v1 Requirements
+
+Requirements for initial release. Each maps to roadmap phases.
+
+### Core Infrastructure
+
+- [ ] **INFRA-01**: System defines core types (PropertyValue, PropertySet, Direction, Filter, HopSpec, Event, DiffTuple, InterpretationTier, FrameTier) shared across all modules
+- [ ] **INFRA-02**: String interner maps bidirectionally between String and u32 for property keys and type names at initialization
+- [ ] **INFRA-03**: Global monotonic epoch sequencer produces strictly increasing u64 epochs via AtomicU64 with SeqCst ordering
+- [ ] **INFRA-04**: Lock-free ring buffer with pre-allocated power-of-2 slots accepts events and returns assigned epochs
+- [ ] **INFRA-05**: Ring buffer correctly handles slot claiming, epoch assignment, and read-after-write with correct atomic ordering
+- [ ] **INFRA-06**: Ring buffer implements Send and Sync with documented safety invariants
+
+### Graph Storage
+
+- [ ] **GRAPH-01**: In-memory property graph stores nodes with adjacency lists (outgoing + incoming edges on each node)
+- [ ] **GRAPH-02**: Node CRUD: add node (with type), remove node (cascading edge removal from neighbors), get node O(1)
+- [ ] **GRAPH-03**: Edge CRUD: add edge (updates both source outgoing and target incoming), remove edge (updates both nodes)
+- [ ] **GRAPH-04**: Directional neighbor queries filter by Direction (Outgoing/Incoming/Any) and optional edge type
+- [ ] **GRAPH-05**: Property upsert on nodes with interned u32 keys
+- [ ] **GRAPH-06**: Node count and edge count queries
+
+### Differential MVCC
+
+- [ ] **DIFF-01**: DiffCollection stores differential tuples (payload, epoch, delta) with +1 for assertion and -1 for retraction
+- [ ] **DIFF-02**: Net delta computation per payload (sum of deltas for matching payloads) is mathematically exact
+- [ ] **DIFF-03**: Aggregate net delta (sum of all deltas across all tuples) tracks frame-level state
+- [ ] **DIFF-04**: Temporal snapshot returns payloads with positive net delta at or before a given epoch
+- [ ] **DIFF-05**: Current state returns snapshot at u64::MAX (effectively "now")
+- [ ] **DIFF-06**: Compaction groups tuples by payload below frontier epoch: annihilates net-zero, collapses survivors, warns on negative net
+- [ ] **DIFF-07**: Tuple count and emptiness queries for memory pressure monitoring
+
+### Frame System
+
+- [ ] **FRAME-01**: Frame holds a multi-hop pattern (Vec<HopSpec>), anchor node, and DiffCollection of traversal paths
+- [ ] **FRAME-02**: Materialize performs DFS from anchor node following hop pattern, collecting all complete paths as +1 assertions
+- [ ] **FRAME-03**: Materialization filters by edge type, target node type, and property filter at each hop
+- [ ] **FRAME-04**: Apply delta (+1 or -1) to frame state with cached net_delta update
+- [ ] **FRAME-05**: Frame query returns current state (paths with positive net delta), incrementing query_count
+- [ ] **FRAME-06**: Frame snapshot returns historical state at a given epoch
+- [ ] **FRAME-07**: Frame compaction delegates to underlying DiffCollection
+- [ ] **FRAME-08**: Frame eviction clears state and sets tier to Cold; re-materialization restores state
+
+### Signal Routing
+
+- [ ] **ROUTE-01**: Inverted index maps node IDs to sets of frame IDs containing that node
+- [ ] **ROUTE-02**: Inverted index maps (source_node, edge_type) pairs to sets of frame IDs
+- [ ] **ROUTE-03**: affected_frames returns deduplicated union of all frame IDs affected by a given Event
+- [ ] **ROUTE-04**: Frame registration adds to all relevant posting lists; unregistration removes from all
+
+### Interpretation
+
+- [ ] **INTERP-01**: Tier 1 binary check detects when a frame's net delta changes from previous value
+- [ ] **INTERP-02**: Tier 2 structural analysis identifies completed and broken hops in frame paths at a given epoch
+
+### Adaptive Tiering
+
+- [ ] **TIER-01**: Frame priority scoring uses weighted combination of query frequency, mutation rate, and recency decay
+- [ ] **TIER-02**: Tier recommendation classifies frames as Hot (>0.7), Warm, or Cold (<0.2) based on normalized score
+
+### Embryonic Frame Discovery
+
+- [ ] **EMBRYO-01**: Pattern templates define multi-hop patterns to watch for with configurable promotion threshold
+- [ ] **EMBRYO-02**: decompose_frame generates all sub-patterns of length >= 2 from a full frame pattern
+- [ ] **EMBRYO-03**: observe_edge detects when new edges extend anchor candidates' partial paths, updating bitvec completion
+- [ ] **EMBRYO-04**: Auto-promotion triggers when candidate completion_ratio meets or exceeds template threshold
+- [ ] **EMBRYO-05**: Stale candidate pruning removes candidates that haven't progressed within configurable epoch window
+- [ ] **EMBRYO-06**: Max candidates cap per template prevents unbounded memory growth
+
+### Engine Orchestration
+
+- [ ] **ENGINE-01**: Ingest pipeline: push to ring buffer → apply to graph → query inverted index → maintain affected frames → run Tier 1 check
+- [ ] **ENGINE-02**: EdgeAdded events trigger embryonic observe_edge; promotions auto-create new parked frames
+- [ ] **ENGINE-03**: Frame registration materializes against current graph and registers in inverted index
+- [ ] **ENGINE-04**: Compact all frames below a given frontier epoch
+- [ ] **ENGINE-05**: Stats reporting returns node/edge/frame counts, tier distribution, tuple count, embryonic stats
+
+### Testing
+
+- [ ] **TEST-01**: Differential tests verify assert/retract math, annihilation, double-assert, snapshots, compaction, negative delta warning
+- [ ] **TEST-02**: Ring buffer tests verify push/read, sequential epochs, wraparound, unwritten-returns-none
+- [ ] **TEST-03**: Graph store tests verify node/edge CRUD, cascading removal, directional neighbors, edge type filtering
+- [ ] **TEST-04**: Frame tests verify 2-hop materialization, no-path case, multiple paths, delta application, evict/rematerialize
+- [ ] **TEST-05**: Inverted index tests verify register/lookup, affected frames, shared node fan-out, unregister
+- [ ] **TEST-06**: Embryonic tests verify template registration, decomposition, candidate creation, progressive completion, auto-promotion, pruning, cap
+- [ ] **TEST-07**: Integration tests verify full pipeline, retraction pipeline, shared-node multi-frame, embryonic auto-promotion, compaction correctness
+- [ ] **TEST-08**: Snapshot tests verify temporal consistency across frames at specific epochs
+
+### Benchmarks
+
+- [ ] **BENCH-01**: Criterion benchmarks for ingest_event, frame_query, inverted_index_lookup, tier1_check, embryonic_observe, compaction
+
+### Quality
+
+- [ ] **QUAL-01**: cargo test — zero failures
+- [ ] **QUAL-02**: cargo bench — all benchmarks execute and produce numbers
+- [ ] **QUAL-03**: cargo doc --no-deps — generates documentation without warnings
+- [ ] **QUAL-04**: cargo clippy — zero warnings
+- [ ] **QUAL-05**: Every public function has a doc comment; every module has a module-level doc comment
+
+## v2 Requirements
+
+Deferred to future release. Tracked but not in current roadmap.
+
+### Performance
+
+- **PERF-01**: Async background compaction (move synchronous compaction to background thread)
+- **PERF-02**: Multi-threaded event processing (multi-producer ring buffer)
+- **PERF-03**: Incremental path extension for frame maintenance (replace re-traverse approach)
+- **PERF-04**: Count-Min Sketch for query frequency tracking (replace raw counter)
+
+### Testing
+
+- **TEST-09**: loom-based concurrency testing for multi-producer scenarios
+- **TEST-10**: Miri validation for unsafe Send/Sync implementations
+- **TEST-11**: Property-based testing (proptest) for differential math
+
+## Out of Scope
+
+| Feature | Reason |
+|---------|--------|
+| Query language (Cypher, Gremlin, SPARQL) | PoC validates runtime physics, not query UX |
+| Distributed execution | Single-process PoC; distributed is a fundamentally different architecture |
+| Disk persistence | In-memory only; persistence is orthogonal to the differential MVCC hypothesis |
+| Graph algorithms (PageRank, shortest path) | Frame-based traversal replaces traditional graph algorithms |
+| External connectors (Kafka, gRPC) | PoC is a library crate, not a service |
+| Web UI or visualization | Runtime only, no presentation layer |
+| Nightly Rust features | Stable toolchain constraint is non-negotiable |
+
+## Traceability
+
+Which phases cover which requirements. Updated during roadmap creation.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| (populated during roadmap creation) | | |
+
+**Coverage:**
+- v1 requirements: 42 total
+- Mapped to phases: 0
+- Unmapped: 42
+
+---
+*Requirements defined: 2026-02-24*
+*Last updated: 2026-02-24 after initial definition*
