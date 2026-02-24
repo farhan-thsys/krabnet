@@ -526,6 +526,9 @@ impl McpServer {
             threshold,
             max_candidates,
             stale_window,
+            success_count: 0,
+            failure_count: 0,
+            active: true,
         };
         self.engine.register_template(template);
         Ok(json!({ "registered": true }))

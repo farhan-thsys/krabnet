@@ -515,6 +515,9 @@ impl Engine {
                 threshold: 0.8,
                 max_candidates: 100,
                 stale_window: 1000,
+                success_count: 0,
+                failure_count: 0,
+                active: true,
             };
             self.embryonic.register_template(template);
         }
@@ -957,6 +960,9 @@ mod tests {
             threshold: 0.5, // 1/2 hops = 0.5, triggers promotion
             max_candidates: 100,
             stale_window: 10,
+            success_count: 0,
+            failure_count: 0,
+            active: true,
         });
 
         // Add nodes first
@@ -1167,6 +1173,9 @@ mod tests {
             threshold: 1.0,
             max_candidates: 100,
             stale_window: 10,
+            success_count: 0,
+            failure_count: 0,
+            active: true,
         });
 
         let s3 = engine.stats();

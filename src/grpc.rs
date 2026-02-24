@@ -397,6 +397,9 @@ impl KrabnetService for KrabnetServer {
             threshold: req.threshold,
             max_candidates: req.max_candidates as usize,
             stale_window: req.stale_window,
+            success_count: 0,
+            failure_count: 0,
+            active: true,
         };
 
         {

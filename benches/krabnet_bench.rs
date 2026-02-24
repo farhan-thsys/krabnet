@@ -92,6 +92,9 @@ fn setup_engine() -> (engine::Engine, Epoch) {
         threshold: 1.0,
         max_candidates: 200,
         stale_window: 50,
+        success_count: 0,
+        failure_count: 0,
+        active: true,
     });
     eng.register_template(PatternTemplate {
         id: 2,
@@ -112,6 +115,9 @@ fn setup_engine() -> (engine::Engine, Epoch) {
         threshold: 1.0,
         max_candidates: 200,
         stale_window: 50,
+        success_count: 0,
+        failure_count: 0,
+        active: true,
     });
 
     let last_epoch = eng.ingest(Event::NodeAdded {
@@ -216,6 +222,9 @@ fn bench_embryonic_observe(c: &mut Criterion) {
                     threshold: 1.0,
                     max_candidates: 500,
                     stale_window: 100,
+                    success_count: 0,
+                    failure_count: 0,
+                    active: true,
                 });
                 // Pre-populate some candidates by observing edges.
                 for i in 0..50u64 {
