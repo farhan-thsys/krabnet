@@ -18,12 +18,12 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Graph Storage
 
-- [ ] **GRAPH-01**: In-memory property graph stores nodes with adjacency lists (outgoing + incoming edges on each node)
-- [ ] **GRAPH-02**: Node CRUD: add node (with type), remove node (cascading edge removal from neighbors), get node O(1)
-- [ ] **GRAPH-03**: Edge CRUD: add edge (updates both source outgoing and target incoming), remove edge (updates both nodes)
-- [ ] **GRAPH-04**: Directional neighbor queries filter by Direction (Outgoing/Incoming/Any) and optional edge type
-- [ ] **GRAPH-05**: Property upsert on nodes with interned u32 keys
-- [ ] **GRAPH-06**: Node count and edge count queries
+- [x] **GRAPH-01**: In-memory property graph stores nodes with adjacency lists (outgoing + incoming edges on each node)
+- [x] **GRAPH-02**: Node CRUD: add node (with type), remove node (cascading edge removal from neighbors), get node O(1)
+- [x] **GRAPH-03**: Edge CRUD: add edge (updates both source outgoing and target incoming), remove edge (updates both nodes)
+- [x] **GRAPH-04**: Directional neighbor queries filter by Direction (Outgoing/Incoming/Any) and optional edge type
+- [x] **GRAPH-05**: Property upsert on nodes with interned u32 keys
+- [x] **GRAPH-06**: Node count and edge count queries
 
 ### Differential MVCC
 
@@ -84,7 +84,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [ ] **TEST-01**: Differential tests verify assert/retract math, annihilation, double-assert, snapshots, compaction, negative delta warning
 - [x] **TEST-02**: Ring buffer tests verify push/read, sequential epochs, wraparound, unwritten-returns-none
-- [ ] **TEST-03**: Graph store tests verify node/edge CRUD, cascading removal, directional neighbors, edge type filtering
+- [x] **TEST-03**: Graph store tests verify node/edge CRUD, cascading removal, directional neighbors, edge type filtering
 - [ ] **TEST-04**: Frame tests verify 2-hop materialization, no-path case, multiple paths, delta application, evict/rematerialize
 - [ ] **TEST-05**: Inverted index tests verify register/lookup, affected frames, shared node fan-out, unregister
 - [ ] **TEST-06**: Embryonic tests verify template registration, decomposition, candidate creation, progressive completion, auto-promotion, pruning, cap
@@ -144,12 +144,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFRA-04 | Phase 2 | Complete |
 | INFRA-05 | Phase 2 | Complete |
 | INFRA-06 | Phase 2 | Complete |
-| GRAPH-01 | Phase 3 | Pending |
-| GRAPH-02 | Phase 3 | Pending |
-| GRAPH-03 | Phase 3 | Pending |
-| GRAPH-04 | Phase 3 | Pending |
-| GRAPH-05 | Phase 3 | Pending |
-| GRAPH-06 | Phase 3 | Pending |
+| GRAPH-01 | Phase 3 | Complete |
+| GRAPH-02 | Phase 3 | Complete |
+| GRAPH-03 | Phase 3 | Complete |
+| GRAPH-04 | Phase 3 | Complete |
+| GRAPH-05 | Phase 3 | Complete |
+| GRAPH-06 | Phase 3 | Complete |
 | DIFF-01 | Phase 4 | Pending |
 | DIFF-02 | Phase 4 | Pending |
 | DIFF-03 | Phase 4 | Pending |
@@ -186,7 +186,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ENGINE-05 | Phase 9 | Pending |
 | TEST-01 | Phase 4 | Pending |
 | TEST-02 | Phase 2 | Complete |
-| TEST-03 | Phase 3 | Pending |
+| TEST-03 | Phase 3 | Complete |
 | TEST-04 | Phase 5 | Pending |
 | TEST-05 | Phase 6 | Pending |
 | TEST-06 | Phase 8 | Pending |
