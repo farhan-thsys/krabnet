@@ -55,13 +55,13 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Interpretation
 
-- [ ] **INTERP-01**: Tier 1 binary check detects when a frame's net delta changes from previous value
-- [ ] **INTERP-02**: Tier 2 structural analysis identifies completed and broken hops in frame paths at a given epoch
+- [x] **INTERP-01**: Tier 1 binary check detects when a frame's net delta changes from previous value
+- [x] **INTERP-02**: Tier 2 structural analysis identifies completed and broken hops in frame paths at a given epoch
 
 ### Adaptive Tiering
 
-- [ ] **TIER-01**: Frame priority scoring uses weighted combination of query frequency, mutation rate, and recency decay
-- [ ] **TIER-02**: Tier recommendation classifies frames as Hot (>0.7), Warm, or Cold (<0.2) based on normalized score
+- [x] **TIER-01**: Frame priority scoring uses weighted combination of query frequency, mutation rate, and recency decay
+- [x] **TIER-02**: Tier recommendation classifies frames as Hot (>0.7), Warm, or Cold (<0.2) based on normalized score
 
 ### Embryonic Frame Discovery
 
@@ -169,10 +169,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ROUTE-02 | Phase 6 | Complete |
 | ROUTE-03 | Phase 6 | Complete |
 | ROUTE-04 | Phase 6 | Complete |
-| INTERP-01 | Phase 7 | Pending |
-| INTERP-02 | Phase 7 | Pending |
-| TIER-01 | Phase 7 | Pending |
-| TIER-02 | Phase 7 | Pending |
+| INTERP-01 | Phase 7 | Complete |
+| INTERP-02 | Phase 7 | Complete |
+| TIER-01 | Phase 7 | Complete |
+| TIER-02 | Phase 7 | Complete |
 | EMBRYO-01 | Phase 8 | Pending |
 | EMBRYO-02 | Phase 8 | Pending |
 | EMBRYO-03 | Phase 8 | Pending |
