@@ -622,6 +622,44 @@ impl Engine {
             .unwrap_or(0)
     }
 
+    /// Lists all registered frames with their metadata.
+    ///
+    /// Returns a vector of (frame_id, anchor, tier, tuple_count) tuples.
+    /// Acquires read lock on each frame.
+    pub fn list_frames(&self) -> Vec<(u64, NodeId, FrameTier, usize)> {
+        self.frames
+            .iter()
+            .map(|(fid, arc)| {
+                let frame = arc.read().expect("RwLock poisoned");
+                (*fid, frame.anchor(), frame.tier(), frame.tuple_count())
+            })
+            .collect()
+    }
+
+    /// Evicts (removes) a frame from the engine.
+    ///
+    /// Unregisters the frame from the inverted index and removes it from
+    /// the frames map. Returns `true` if the frame was found and removed,
+    /// `false` if no frame with the given ID existed.
+    pub fn evict_frame(&mut self, frame_id: u64) -> bool {
+        if let Some(frame_arc) = self.frames.remove(&frame_id) {
+            // Extract node IDs from frame paths for index cleanup
+            let mut frame = frame_arc.write().expect("RwLock poisoned");
+            let node_ids = Self::extract_node_ids_from_frame(&mut frame);
+            self.index.unregister_frame(frame_id, &node_ids, &[]);
+            self.previous_deltas.remove(&frame_id);
+            self.hysteresis.remove(&frame_id);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns the current epoch of the engine.
+    pub fn current_epoch(&self) -> Epoch {
+        self.current_epoch
+    }
+
     /// Extracts all unique NodeIds from a frame's current materialized paths.
     ///
     /// Calls `frame.query()` to get current paths, then collects all unique

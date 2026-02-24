@@ -23,6 +23,7 @@
 //! - [`coalescer`] -- Mutation coalescing with epoch-window deduplication
 //! - [`fanout`] -- Fan-out limiting with priority-based deferred evaluation
 //! - [`engine`] -- Top-level orchestrator wiring all components into a single pipeline
+//! - [`grpc`] -- gRPC server with 8 RPC methods wrapping the engine
 
 pub mod coalescer;
 pub mod compaction;
@@ -30,6 +31,7 @@ pub mod diff;
 pub mod embryonic;
 pub mod engine;
 pub mod fanout;
+pub mod grpc;
 pub mod frame;
 pub mod graph;
 pub mod interpret;
@@ -47,6 +49,7 @@ pub use diff::DiffCollection;
 pub use fanout::FanOutLimiter;
 pub use embryonic::EmbryonicDiscovery;
 pub use engine::Engine;
+pub use grpc::KrabnetServer;
 pub use frame::Frame;
 pub use graph::Graph;
 pub use interner::Interner;
