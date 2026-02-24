@@ -71,7 +71,7 @@ Plans:
 **Plans**: 4 plans (3 waves)
 
 Plans:
-- [ ] 12-01-PLAN.md — Phase 12 deps + Protobuf schema + gRPC server with 8 RPCs (Wave 1)
+- [x] 12-01-PLAN.md — Phase 12 deps + Protobuf schema + gRPC server with 8 RPCs (Wave 1)
 - [ ] 12-02-PLAN.md — MCP JSON-RPC server + krabnet-mcp binary (Wave 2)
 - [ ] 12-03-PLAN.md — Tier 3 LLM worker + prompt serialization + bounded channel (Wave 2)
 - [ ] 12-04-PLAN.md — WAL persistence + embryonic auto-decomposition + krabnet-server binary + quality (Wave 3)
@@ -115,5 +115,5 @@ v2.0: 11 → 12 → 13
 | 9. Engine Orchestration | 1/1 | Complete | 2026-02-24 |
 | 10. Benchmarks and Quality | 1/1 | Complete | 2026-02-24 |
 | 11. Harden the Engine | 3/3 | Complete    | 2026-02-24 |
-| 12. Production Interface | 0/4 | Not started | - |
+| 12. Production Interface | 1/4 | In progress | - |
 | 13. Scale and Optimize | 0/3 | Not started | - |

@@ -85,10 +85,10 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### gRPC Server
 
-- [ ] **GRPC-01**: Protobuf schema defines KrabnetService with 8 RPC methods (IngestEvent, RegisterFrame, QueryFrame, SubscribeFrame, ListFrames, EvictFrame, RegisterEmbryonicTemplate, GetStats)
-- [ ] **GRPC-02**: KrabnetServer implements all 8 methods with Engine held via Arc<RwLock<Engine>>
-- [ ] **GRPC-03**: SubscribeFrame uses tokio::sync::broadcast for real-time frame update streaming
-- [ ] **GRPC-04**: build.rs compiles proto file via tonic-build
+- [x] **GRPC-01**: Protobuf schema defines KrabnetService with 8 RPC methods (IngestEvent, RegisterFrame, QueryFrame, SubscribeFrame, ListFrames, EvictFrame, RegisterEmbryonicTemplate, GetStats)
+- [x] **GRPC-02**: KrabnetServer implements all 8 methods with Engine held via Arc<RwLock<Engine>>
+- [x] **GRPC-03**: SubscribeFrame uses tokio::sync::broadcast for real-time frame update streaming
+- [x] **GRPC-04**: build.rs compiles proto file via tonic-build
 
 ### MCP Server
 
@@ -154,7 +154,7 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 - [x] **TEST-15**: test_sustained_throughput — 10K nodes, 100K edges, 200 frames, 500K events, >50K events/sec, stable memory
 - [x] **TEST-16**: test_compaction_under_load — stress test with compaction enabled
 - [x] **TEST-17**: test_concurrent_read_write — reader + writer threads for 5 seconds, no panics
-- [ ] **TEST-18**: test_grpc_ingest_and_query — gRPC client ingest + query roundtrip
+- [x] **TEST-18**: test_grpc_ingest_and_query — gRPC client ingest + query roundtrip
 - [ ] **TEST-19**: test_mcp_tools_list — spawn MCP binary, verify 5 tools returned
 - [ ] **TEST-20**: test_tier3_with_mock_llm — Tier 2 results through channel, mock LLM called, result stored
 - [ ] **TEST-21**: test_tier3_channel_backpressure — fill channel, engine never blocks, excess dropped
@@ -300,10 +300,10 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | BENCH-02 | Phase 11 | Complete |
 | QUAL-06 | Phase 11 | Complete |
 | QUAL-07 | Phase 11 | Complete |
-| GRPC-01 | Phase 12 | Pending |
-| GRPC-02 | Phase 12 | Pending |
-| GRPC-03 | Phase 12 | Pending |
-| GRPC-04 | Phase 12 | Pending |
+| GRPC-01 | Phase 12 | Complete |
+| GRPC-02 | Phase 12 | Complete |
+| GRPC-03 | Phase 12 | Complete |
+| GRPC-04 | Phase 12 | Complete |
 | MCP-01 | Phase 12 | Pending |
 | MCP-02 | Phase 12 | Pending |
 | MCP-03 | Phase 12 | Pending |
@@ -317,7 +317,7 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | EMBRYO-07 | Phase 12 | Pending |
 | BIN-01 | Phase 12 | Pending |
 | BIN-02 | Phase 12 | Pending |
-| TEST-18 | Phase 12 | Pending |
+| TEST-18 | Phase 12 | Complete |
 | TEST-19 | Phase 12 | Pending |
 | TEST-20 | Phase 12 | Pending |
 | TEST-21 | Phase 12 | Pending |

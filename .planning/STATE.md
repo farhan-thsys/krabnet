@@ -5,24 +5,24 @@
 See: .planning/PROJECT.md (updated 2026-02-25)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 11: Harden the Engine
+**Current focus:** Phase 12: Production Interface
 **Milestone:** v2.0 Full Build Completion (67 requirements across 3 phases)
 
 ## Current Position
 
-Phase: 11 of 13 (Harden the Engine) -- COMPLETE
-Plan: 3/3 — phase 11 complete
-Status: Completed 11-03 (stress tests, quality gates, benchmark)
-Last activity: 2026-02-25 — Completed plan 11-03
+Phase: 12 of 13 (Production Interface)
+Plan: 1/4 — completed 12-01
+Status: Completed 12-01 (gRPC server with 8 RPCs)
+Last activity: 2026-02-25 — Completed plan 12-01
 
-Progress: [███████████░░] 85% (11/13 phases)
+Progress: [███████████░░] 88% (12-01 of 13 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
-- Average duration: 4 min
-- Total execution time: 0.91 hours
+- Total plans completed: 13
+- Average duration: 5 min
+- Total execution time: 1.13 hours
 
 **By Phase:**
 
@@ -39,16 +39,17 @@ Progress: [███████████░░] 85% (11/13 phases)
 | 9 - Engine Orchestration | 1 | 3 min | 3 min |
 | 10 - Benchmarks & Quality | 1 | 4 min | 4 min |
 | 11 - Harden the Engine | 3 | 25 min | 8 min |
+| 12 - Production Interface | 1 | 13 min | 13 min |
 
 **Recent Trend:**
-- Last 5 plans: 3m, 3m, 4m, 7m, 10m
+- Last 5 plans: 3m, 4m, 7m, 10m, 13m
 - Trend: stable
 
 *Updated after each plan completion*
 | Phase 11 P01 | 8min | 2 tasks | 4 files |
 | Phase 11 P02 | 7min | 2 tasks | 4 files |
 | Phase 11 P03 | 10min | 2 tasks | 5 files |
-| Phase 11 P03 | 10min | 2 tasks | 5 files |
+| Phase 12 P01 | 13min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -104,6 +105,11 @@ Recent decisions affecting current work:
 - [Phase 11-03]: Hysteresis updated per-frame after evaluation, tier changes applied only when consecutive threshold met
 - [Phase 11-03]: affected_frames_by_node() added to InvertedIndex for coalescer batch integration path
 - [Phase 11]: Engine::with_config() as unified constructor for all hardening features
+- [Phase 12-01]: Pin tokio=1.38.1 to avoid windows-sys 0.60+/dlltool incompatibility on GNU toolchain
+- [Phase 12-01]: Use protox for proto compilation instead of requiring protoc binary
+- [Phase 12-01]: KrabnetServer wraps Engine via Arc<RwLock<Engine>> -- write lock for mutations, read lock for queries
+- [Phase 12-01]: SubscribeFrame uses tokio::sync::broadcast with 1024 capacity
+- [Phase 12-01]: async-stream crate for ergonomic server-streaming SubscribeFrame implementation
 
 ### Pending Todos
 
@@ -116,5 +122,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-25
-Stopped at: Completed 11-03-PLAN.md (Phase 11 complete)
+Stopped at: Completed 12-01-PLAN.md
 Resume file: None
