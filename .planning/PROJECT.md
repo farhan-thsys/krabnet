@@ -8,35 +8,65 @@ Krabnet is a streaming graph runtime with differential MVCC that pre-materialize
 
 When a signal arrives, decision-relevant context is already materialized — zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
 
+## Current Milestone: v2.0 Full Build Completion
+
+**Goal:** Harden the engine for concurrent load, add production interfaces (gRPC + MCP + WAL + Tier 3 LLM), and replace PoC data structures with enterprise-grade alternatives.
+
+**Target features:**
+- Async background compaction, multi-threaded frame evaluation, mutation coalescing
+- Super-node fan-out limits and frame prioritizer hysteresis
+- gRPC server (8 RPC methods) and MCP server (5 tools) for external access
+- Tier 3 LLM integration with graph-aware prompt serialization
+- Write-ahead log for crash recovery persistence
+- Set-Trie inverted index, Count-Min Sketch, trunk/leaf detection
+- Custom buffer pool manager with graph-aware eviction
+- Learned template weighting for embryonic discovery
+- Enterprise-scale benchmarks (100K nodes, 1M edges, 500 frames)
+
 ## Requirements
 
 ### Validated
 
-(None yet — ship to validate)
+<!-- v1.0 milestone: shipped and confirmed -->
+- ✓ Lock-free ring buffer with monotonic epoch sequencer — v1.0
+- ✓ In-memory property graph with adjacency-on-node storage — v1.0
+- ✓ Differential MVCC engine with exact +1/-1 math — v1.0
+- ✓ Parked traverser (frame) system with DFS materialization — v1.0
+- ✓ Signal-to-frame routing via inverted index — v1.0
+- ✓ Adaptive frame tiering (hot/warm/cold) — v1.0
+- ✓ Two-tier interpretation (binary + structural) — v1.0
+- ✓ Embryonic Frame Discovery with bitvec tracking — v1.0
+- ✓ Engine orchestrator with full ingest pipeline — v1.0
+- ✓ String interning (integer IDs on hot path) — v1.0
+- ✓ 144 tests passing, 6 Criterion benchmarks — v1.0
 
 ### Active
 
-- [ ] Lock-free ring buffer for event ingestion with monotonic epoch sequencer
-- [ ] In-memory property graph with topological indexing (adjacency on nodes)
-- [ ] Differential MVCC engine with +1/-1 multiset semantics, compaction, and temporal snapshots
-- [ ] Parked traverser (frame) system with multi-hop pattern materialization and incremental delta maintenance
-- [ ] Signal-to-frame routing via inverted index (node and edge posting lists)
-- [ ] Adaptive frame tiering (hot/warm/cold) with query frequency, mutation rate, and recency scoring
-- [ ] Two-tier interpretation: Tier 1 binary delta-sum check, Tier 2 structural path analysis
-- [ ] Embryonic Frame Discovery engine with pattern templates, progressive completion tracking, and auto-promotion
-- [ ] Top-level Engine struct wiring all components with full ingest pipeline
-- [ ] String interning for property keys and type names (integer IDs on hot path)
-- [ ] Zero heap allocation on hot path after initialization
-- [ ] Lock-free concurrency primitives (AtomicU64/AtomicBool with correct ordering)
-- [ ] Comprehensive test suite (8 test files) and Criterion benchmarks
+- [ ] Async background compaction with double-buffering
+- [ ] Multi-threaded frame evaluation with thread pool
+- [ ] Mutation coalescing for burst deduplication
+- [ ] Super-node fan-out limits with deferred eval queue
+- [ ] Frame prioritizer hysteresis (anti-thrashing)
+- [ ] gRPC server with 8 RPC methods including streaming subscriptions
+- [ ] MCP JSON-RPC server over stdio with 5 tools
+- [ ] Tier 3 LLM integration with graph-aware prompt serialization
+- [ ] Write-ahead log with crash recovery replay
+- [ ] Set-Trie inverted index replacing HashMap
+- [ ] Count-Min Sketch for probabilistic frequency estimation
+- [ ] Trunk/leaf path detection with pinned trunks
+- [ ] Custom buffer pool manager with graph-aware eviction
+- [ ] Learned template weighting for embryonic discovery
+- [ ] krabnet-server and krabnet-mcp binaries
+- [ ] Stress test suite (50K events/sec sustained)
+- [ ] Enterprise-scale benchmarks
 
 ### Out of Scope
 
-- Async background compaction — synchronous only for this sprint, but interface isolated for future
-- Multi-threaded event processing — single-threaded for now, but atomics must be correct for future multi-producer
+- Query language (Cypher, Gremlin, SPARQL) — runtime only, not query UX
+- Distributed execution — single-process, distributed is different architecture
+- Web UI or visualization — runtime only, no presentation layer
+- Nightly Rust features — stable toolchain constraint non-negotiable
 - External graph crates (petgraph) — all graph structures built from scratch
-- Nightly Rust features — stable toolchain only
-- Any dependencies beyond crossbeam, bitvec, and criterion
 
 ## Context
 
@@ -53,10 +83,10 @@ Project structure: 13 source modules in `src/`, 8 test files in `tests/`, 1 benc
 
 - **Toolchain**: Rust stable — no nightly features
 - **Hot path allocation**: Zero heap allocation after initialization. All Vecs, buffers, index structures pre-allocated at startup
-- **Concurrency**: Lock-free on ingestion path. AtomicU64/AtomicBool with Acquire/Release or SeqCst. No Mutex/RwLock on hot path
+- **Concurrency**: Lock-free on ingestion path. No Mutex/RwLock on hot path. parking_lot Mutex allowed on background threads only
 - **Identifiers**: All integers — u64 for node/edge IDs, u32 for type IDs and property keys. Zero String on hot path
-- **Dependencies**: Only crossbeam, bitvec (runtime), criterion (dev). Nothing else
-- **Build order**: Strict sequential — each module must compile and pass tests before proceeding to next
+- **Dependencies v2.0**: crossbeam 0.8, parking_lot 0.12 (background only), bitvec 1.0, tonic 0.12, prost 0.13, tokio 1 (full), serde 1 (derive), serde_json 1, criterion 0.5 (dev)
+- **Build order**: Strict sequential — Phase 11 → 12 → 13, each must compile and pass ALL tests before next
 
 ## Key Decisions
 
@@ -69,4 +99,4 @@ Project structure: 13 source modules in `src/`, 8 test files in `tests/`, 1 benc
 | bitvec for embryonic completion tracking | Efficient per-hop completion bits, minimal dependency | — Pending |
 
 ---
-*Last updated: 2026-02-24 after initialization*
+*Last updated: 2026-02-25 after v2.0 milestone start*

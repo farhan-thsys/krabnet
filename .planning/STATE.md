@@ -10,10 +10,9 @@ See: .planning/PROJECT.md (updated 2026-02-24)
 ## Current Position
 
 Phase: 11 of 13 (Harden the Engine)
-Plan: 0 — plans not yet created
-Status: Phases 1-10 complete, phases 11-13 queued
-Last activity: 2026-02-25 -- Added phases 11-13 to roadmap, saved sprint spec
-Resume file: .planning/RESUME.md
+Plan: Not started (defining requirements)
+Status: Milestone v2.0 started — defining requirements
+Last activity: 2026-02-25 — Milestone v2.0 started
 
 Progress: [██████████░░░] 77% (10/13 phases)
 
