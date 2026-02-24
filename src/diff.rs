@@ -221,3 +221,225 @@ where
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Assert then retract the same payload at the same epoch produces
+    /// net-zero, and compaction removes the annihilated tuple entirely.
+    #[test]
+    fn assert_retract_annihilation() {
+        let mut coll = DiffCollection::new();
+        coll.assert_tuple("Alice", Epoch(1));
+        coll.retract_tuple("Alice", Epoch(1));
+
+        assert_eq!(coll.net_delta_for(&"Alice"), 0);
+        assert_eq!(coll.aggregate_net_delta(), 0);
+        assert_eq!(coll.tuple_count(), 2);
+
+        let result = coll.compact(Epoch(1));
+        assert_eq!(result.annihilated, 1);
+        assert_eq!(result.collapsed, 0);
+        assert!(result.warnings.is_empty());
+        assert_eq!(coll.tuple_count(), 0);
+        assert!(coll.is_empty());
+    }
+
+    /// Double-assert of the same payload produces multiplicity 2, not 1
+    /// (true multiset semantics).
+    #[test]
+    fn double_assert_multiplicity() {
+        let mut coll = DiffCollection::new();
+        coll.assert_tuple(42u64, Epoch(1));
+        coll.assert_tuple(42u64, Epoch(2));
+
+        assert_eq!(coll.net_delta_for(&42u64), 2);
+        assert_eq!(coll.aggregate_net_delta(), 2);
+        assert_eq!(coll.tuple_count(), 2);
+    }
+
+    /// Arbitrary sequence of asserts/retracts produces mathematically exact
+    /// per-payload and aggregate deltas.
+    #[test]
+    fn net_delta_exact_for_sequence() {
+        let mut coll = DiffCollection::new();
+
+        // "x": +1 +1 +1 -1 = net 2
+        coll.assert_tuple("x", Epoch(1));
+        coll.assert_tuple("x", Epoch(2));
+        coll.assert_tuple("x", Epoch(3));
+        coll.retract_tuple("x", Epoch(4));
+
+        // "y": +1 -1 -1 = net -1
+        coll.assert_tuple("y", Epoch(1));
+        coll.retract_tuple("y", Epoch(2));
+        coll.retract_tuple("y", Epoch(3));
+
+        // "z": +1 = net 1
+        coll.assert_tuple("z", Epoch(5));
+
+        assert_eq!(coll.net_delta_for(&"x"), 2);
+        assert_eq!(coll.net_delta_for(&"y"), -1);
+        assert_eq!(coll.net_delta_for(&"z"), 1);
+
+        // Aggregate: 2 + (-1) + 1 = 2
+        assert_eq!(coll.aggregate_net_delta(), 2);
+    }
+
+    /// Snapshot at a middle epoch returns only payloads with positive net
+    /// delta from tuples at-or-before that epoch.
+    #[test]
+    fn snapshot_at_epoch() {
+        let mut coll = DiffCollection::new();
+
+        // "a" asserted at epoch 1
+        coll.assert_tuple("a", Epoch(1));
+        // "b" asserted at epoch 2
+        coll.assert_tuple("b", Epoch(2));
+        // "c" asserted at epoch 3
+        coll.assert_tuple("c", Epoch(3));
+        // "a" retracted at epoch 4
+        coll.retract_tuple("a", Epoch(4));
+
+        // Snapshot at epoch 2: "a" (+1), "b" (+1) -- "c" not yet, "a" not yet retracted
+        let snap2: HashSet<&&str> = coll.snapshot(Epoch(2)).into_iter().collect();
+        assert_eq!(snap2.len(), 2);
+        assert!(snap2.contains(&&"a"));
+        assert!(snap2.contains(&&"b"));
+
+        // Snapshot at epoch 3: "a" (+1), "b" (+1), "c" (+1)
+        let snap3: HashSet<&&str> = coll.snapshot(Epoch(3)).into_iter().collect();
+        assert_eq!(snap3.len(), 3);
+
+        // Snapshot at epoch 4: "a" retracted (net 0), "b" (+1), "c" (+1)
+        let snap4: HashSet<&&str> = coll.snapshot(Epoch(4)).into_iter().collect();
+        assert_eq!(snap4.len(), 2);
+        assert!(snap4.contains(&&"b"));
+        assert!(snap4.contains(&&"c"));
+        assert!(!snap4.contains(&&"a"));
+    }
+
+    /// current_state() is equivalent to snapshot(Epoch(u64::MAX)).
+    #[test]
+    fn current_state_is_max_snapshot() {
+        let mut coll = DiffCollection::new();
+        coll.assert_tuple(10u64, Epoch(1));
+        coll.assert_tuple(20u64, Epoch(2));
+        coll.retract_tuple(10u64, Epoch(3));
+
+        let current: HashSet<&u64> = coll.current_state().into_iter().collect();
+        let max_snap: HashSet<&u64> = coll.snapshot(Epoch(u64::MAX)).into_iter().collect();
+        assert_eq!(current, max_snap);
+
+        // Only 20 should be present (10 was retracted)
+        assert_eq!(current.len(), 1);
+        assert!(current.contains(&20u64));
+    }
+
+    /// Compaction removes net-zero payloads entirely (annihilation).
+    #[test]
+    fn compact_annihilates_net_zero() {
+        let mut coll = DiffCollection::new();
+        coll.assert_tuple("gone", Epoch(1));
+        coll.retract_tuple("gone", Epoch(2));
+        coll.assert_tuple("stays", Epoch(1));
+
+        let result = coll.compact(Epoch(2));
+        assert_eq!(result.annihilated, 1);
+        assert_eq!(result.collapsed, 1);
+        assert!(result.warnings.is_empty());
+
+        // Only "stays" should remain as a single tuple
+        assert_eq!(coll.tuple_count(), 1);
+        assert_eq!(coll.net_delta_for(&"stays"), 1);
+        assert_eq!(coll.net_delta_for(&"gone"), 0);
+    }
+
+    /// Compaction collapses multiple tuples for a survivor into one with
+    /// the correct summed delta.
+    #[test]
+    fn compact_collapses_survivors() {
+        let mut coll = DiffCollection::new();
+        // Three asserts of same payload across different epochs
+        coll.assert_tuple("multi", Epoch(1));
+        coll.assert_tuple("multi", Epoch(2));
+        coll.assert_tuple("multi", Epoch(3));
+
+        assert_eq!(coll.tuple_count(), 3);
+
+        let result = coll.compact(Epoch(3));
+        assert_eq!(result.collapsed, 1);
+        assert_eq!(result.annihilated, 0);
+        assert!(result.warnings.is_empty());
+
+        // Should now be a single tuple with delta = 3
+        assert_eq!(coll.tuple_count(), 1);
+        assert_eq!(coll.net_delta_for(&"multi"), 3);
+        assert_eq!(coll.aggregate_net_delta(), 3);
+    }
+
+    /// Retract without assert produces a negative net delta warning
+    /// during compaction.
+    #[test]
+    fn compact_warns_on_negative() {
+        let mut coll = DiffCollection::new();
+        coll.retract_tuple("orphan", Epoch(1));
+
+        let result = coll.compact(Epoch(1));
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("Negative net delta"));
+        assert!(result.warnings[0].contains("-1"));
+        assert_eq!(result.collapsed, 1);
+        assert_eq!(result.annihilated, 0);
+
+        // The collapsed tuple should still exist with negative delta
+        assert_eq!(coll.tuple_count(), 1);
+        assert_eq!(coll.net_delta_for(&"orphan"), -1);
+    }
+
+    /// Tuples with epoch > frontier are left untouched by compaction.
+    #[test]
+    fn compact_preserves_tuples_after_frontier() {
+        let mut coll = DiffCollection::new();
+        coll.assert_tuple("before", Epoch(1));
+        coll.assert_tuple("before", Epoch(2));
+        coll.assert_tuple("after", Epoch(5));
+        coll.assert_tuple("after", Epoch(6));
+
+        let result = coll.compact(Epoch(3));
+
+        // "before" collapsed to 1 tuple, "after" untouched (2 tuples)
+        assert_eq!(result.collapsed, 1);
+        assert_eq!(coll.tuple_count(), 3); // 1 collapsed + 2 after
+
+        // "after" still has original individual tuples
+        assert_eq!(coll.net_delta_for(&"after"), 2);
+        assert_eq!(coll.net_delta_for(&"before"), 2);
+        assert_eq!(coll.aggregate_net_delta(), 4);
+    }
+
+    /// tuple_count and is_empty reflect actual state.
+    #[test]
+    fn tuple_count_and_empty() {
+        let mut coll: DiffCollection<u64> = DiffCollection::new();
+        assert!(coll.is_empty());
+        assert_eq!(coll.tuple_count(), 0);
+
+        coll.assert_tuple(1, Epoch(1));
+        assert!(!coll.is_empty());
+        assert_eq!(coll.tuple_count(), 1);
+
+        coll.assert_tuple(2, Epoch(2));
+        assert_eq!(coll.tuple_count(), 2);
+
+        coll.retract_tuple(1, Epoch(3));
+        assert_eq!(coll.tuple_count(), 3);
+
+        // After compaction: 1 annihilated, 1 collapsed
+        coll.compact(Epoch(3));
+        assert_eq!(coll.tuple_count(), 1);
+        assert!(!coll.is_empty());
+    }
+}
