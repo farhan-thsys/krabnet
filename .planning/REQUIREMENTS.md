@@ -120,13 +120,13 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### Set-Trie Inverted Index
 
-- [ ] **SETTRIE-01**: Set-Trie data structure with insert(set, value), query_containing(elements), query_intersecting(elements), remove(value)
-- [ ] **SETTRIE-02**: Inverted index uses Set-Trie internally while keeping same public API
+- [x] **SETTRIE-01**: Set-Trie data structure with insert(set, value), query_containing(elements), query_intersecting(elements), remove(value)
+- [x] **SETTRIE-02**: Inverted index uses Set-Trie internally while keeping same public API
 
 ### Count-Min Sketch
 
-- [ ] **CMS-01**: Fixed-size width x depth matrix (default: 1024 x 4) with increment(key) and estimate(key) returning minimum across hash rows
-- [ ] **CMS-02**: Frame prioritizer uses Count-Min Sketch instead of per-frame query counters
+- [x] **CMS-01**: Fixed-size width x depth matrix (default: 1024 x 4) with increment(key) and estimate(key) returning minimum across hash rows
+- [x] **CMS-02**: Frame prioritizer uses Count-Min Sketch instead of per-frame query counters
 
 ### Trunk/Leaf Detection
 
@@ -161,9 +161,9 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 - [x] **TEST-22**: test_wal_write_and_replay — 1000 events with WAL, drop engine, replay WAL, state matches
 - [x] **TEST-23**: test_wal_crash_recovery — simulate crash, recovery up to last fsync point
 - [x] **TEST-24**: test_auto_decomposition_on_register — 3-hop frame registration increases embryonic templates
-- [ ] **TEST-25**: test_set_trie_correctness — 1000 sets, containment and intersection queries correct
-- [ ] **TEST-26**: test_set_trie_memory_vs_hashmap — memory comparison for 10K frames
-- [ ] **TEST-27**: test_count_min_sketch_accuracy — 10K keys, estimates within expected error bounds
+- [x] **TEST-25**: test_set_trie_correctness — 1000 sets, containment and intersection queries correct
+- [x] **TEST-26**: test_set_trie_memory_vs_hashmap — memory comparison for 10K frames
+- [x] **TEST-27**: test_count_min_sketch_accuracy — 10K keys, estimates within expected error bounds
 - [ ] **TEST-28**: test_trunk_detection — 50 frames, 30 share first 2 hops, detected as trunk, pinned
 - [ ] **TEST-29**: test_buffer_pool_alloc_free — allocate all, free half, reallocate, no corruption
 - [ ] **TEST-30**: test_buffer_pool_eviction_order — Cold evicted before Warm before Hot
@@ -172,7 +172,7 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 ### v2 Benchmarks
 
 - [x] **BENCH-02**: bench_concurrent_ingest — throughput with 4 evaluator threads
-- [ ] **BENCH-03**: bench_set_trie_lookup vs bench_hashmap_lookup — latency comparison
+- [x] **BENCH-03**: bench_set_trie_lookup vs bench_hashmap_lookup — latency comparison
 - [ ] **BENCH-04**: bench_scale_ingest — 100K nodes, 1M edges, throughput measurement
 - [ ] **BENCH-05**: bench_scale_frame_query — query latency with large DiffCollections
 - [ ] **BENCH-06**: bench_scale_set_trie_routing — Set-Trie at enterprise scale
@@ -325,24 +325,24 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | TEST-23 | Phase 12 | Complete |
 | TEST-24 | Phase 12 | Complete |
 | QUAL-08 | Phase 12 | Complete |
-| SETTRIE-01 | Phase 13 | Pending |
-| SETTRIE-02 | Phase 13 | Pending |
-| CMS-01 | Phase 13 | Pending |
-| CMS-02 | Phase 13 | Pending |
+| SETTRIE-01 | Phase 13 | Complete |
+| SETTRIE-02 | Phase 13 | Complete |
+| CMS-01 | Phase 13 | Complete |
+| CMS-02 | Phase 13 | Complete |
 | TRUNK-01 | Phase 13 | Pending |
 | TRUNK-02 | Phase 13 | Pending |
 | BUFPOOL-01 | Phase 13 | Pending |
 | BUFPOOL-02 | Phase 13 | Pending |
 | LEARN-01 | Phase 13 | Pending |
 | LEARN-02 | Phase 13 | Pending |
-| TEST-25 | Phase 13 | Pending |
-| TEST-26 | Phase 13 | Pending |
-| TEST-27 | Phase 13 | Pending |
+| TEST-25 | Phase 13 | Complete |
+| TEST-26 | Phase 13 | Complete |
+| TEST-27 | Phase 13 | Complete |
 | TEST-28 | Phase 13 | Pending |
 | TEST-29 | Phase 13 | Pending |
 | TEST-30 | Phase 13 | Pending |
 | TEST-31 | Phase 13 | Pending |
-| BENCH-03 | Phase 13 | Pending |
+| BENCH-03 | Phase 13 | Complete |
 | BENCH-04 | Phase 13 | Pending |
 | BENCH-05 | Phase 13 | Pending |
 | BENCH-06 | Phase 13 | Pending |

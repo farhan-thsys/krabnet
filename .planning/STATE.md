@@ -5,17 +5,17 @@
 See: .planning/PROJECT.md (updated 2026-02-25)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 12: Production Interface
+**Current focus:** Phase 13: Scale and Optimize
 **Milestone:** v2.0 Full Build Completion (67 requirements across 3 phases)
 
 ## Current Position
 
-Phase: 12 of 13 (Production Interface)
-Plan: 4/4 — completed 12-04
-Status: Completed 12-04 (WAL + Auto-decomposition + Server binary) -- Phase 12 COMPLETE
-Last activity: 2026-02-25 — Completed plan 12-04
+Phase: 13 of 13 (Scale and Optimize)
+Plan: 1/3 — completed 13-01
+Status: Completed 13-01 (Set-Trie + Count-Min Sketch + InvertedIndex + FrameActivityTracker)
+Last activity: 2026-02-25 — Completed plan 13-01
 
-Progress: [████████████░] 92% (12-04 of 13 phases)
+Progress: [████████████░] 95% (13-01 of 13 phases)
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [████████████░] 92% (12-04 of 13 phases)
 | Phase 12 P03 | 4min | 1 tasks | 1 files |
 | Phase 12 P02 | 6min | 2 tasks | 4 files |
 | Phase 12 P04 | 6min | 2 tasks | 6 files |
+| Phase 13 P01 | 9min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -122,6 +123,10 @@ Recent decisions affecting current work:
 - [Phase 12-04]: WalReader stops at first UnexpectedEof for crash boundary detection
 - [Phase 12-04]: WAL persistence after engine ingest (epoch assigned first, then persisted)
 - [Phase 12-04]: Auto-decomposition template IDs: (frame_id << 16) | sub_pattern_index
+- [Phase 13-01]: SetTrie stores per-frame node sets, query_intersecting with single element replaces HashMap posting list lookup
+- [Phase 13-01]: InvertedIndex keeps frame_nodes HashMap for unregister path reconstruction
+- [Phase 13-01]: FrameActivityTracker delegates to free-function priority_score() with CMS-estimated counts
+- [Phase 13-01]: TEST-27 uses larger CMS (16384x8) for 10K-key accuracy validation (default 1024x4 too small)
 
 ### Pending Todos
 
@@ -134,5 +139,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-25
-Stopped at: Completed 12-04-PLAN.md -- Phase 12 COMPLETE
+Stopped at: Completed 13-01-PLAN.md
 Resume file: None
