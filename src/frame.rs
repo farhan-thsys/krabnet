@@ -297,6 +297,11 @@ impl Frame {
     pub fn net_delta(&self) -> i64 {
         self.net_delta
     }
+
+    /// Returns the number of differential tuples in the frame's state.
+    pub fn tuple_count(&self) -> usize {
+        self.state.tuple_count()
+    }
 }
 
 #[cfg(test)]

@@ -20,9 +20,11 @@
 //! - [`interpret`] -- Two-tier signal interpretation (binary + structural)
 //! - [`tiering`] -- Adaptive frame priority scoring and tier recommendation
 //! - [`embryonic`] -- Embryonic frame discovery with bitvec completion tracking
+//! - [`engine`] -- Top-level orchestrator wiring all components into a single pipeline
 
 pub mod diff;
 pub mod embryonic;
+pub mod engine;
 pub mod frame;
 pub mod graph;
 pub mod interpret;
@@ -35,11 +37,12 @@ pub mod types;
 
 // Re-export core types for ergonomic use: `use krabnet::*`
 pub use diff::DiffCollection;
+pub use embryonic::EmbryonicDiscovery;
+pub use engine::Engine;
 pub use frame::Frame;
 pub use graph::Graph;
 pub use interner::Interner;
 pub use ring_buffer::RingBuffer;
 pub use routing::InvertedIndex;
 pub use sequencer::EpochSequencer;
-pub use embryonic::EmbryonicDiscovery;
 pub use types::*;
