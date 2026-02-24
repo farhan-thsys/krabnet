@@ -140,8 +140,8 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### Learned Template Weighting
 
-- [ ] **LEARN-01**: Track template_success_count and template_failure_count for each embryonic template
-- [ ] **LEARN-02**: Templates sorted by success_ratio for observe_edge scanning; templates with ratio < 0.1 after 50+ promotions deactivated
+- [x] **LEARN-01**: Track template_success_count and template_failure_count for each embryonic template
+- [x] **LEARN-02**: Templates sorted by success_ratio for observe_edge scanning; templates with ratio < 0.1 after 50+ promotions deactivated
 
 ### v2 Testing
 
@@ -167,24 +167,24 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 - [x] **TEST-28**: test_trunk_detection — 50 frames, 30 share first 2 hops, detected as trunk, pinned
 - [x] **TEST-29**: test_buffer_pool_alloc_free — allocate all, free half, reallocate, no corruption
 - [x] **TEST-30**: test_buffer_pool_eviction_order — Cold evicted before Warm before Hot
-- [ ] **TEST-31**: test_learned_weighting — successful template ranks higher than failed template
+- [x] **TEST-31**: test_learned_weighting — successful template ranks higher than failed template
 
 ### v2 Benchmarks
 
 - [x] **BENCH-02**: bench_concurrent_ingest — throughput with 4 evaluator threads
 - [x] **BENCH-03**: bench_set_trie_lookup vs bench_hashmap_lookup — latency comparison
-- [ ] **BENCH-04**: bench_scale_ingest — 100K nodes, 1M edges, throughput measurement
-- [ ] **BENCH-05**: bench_scale_frame_query — query latency with large DiffCollections
-- [ ] **BENCH-06**: bench_scale_set_trie_routing — Set-Trie at enterprise scale
-- [ ] **BENCH-07**: bench_scale_embryonic — 100 templates, 5000 candidates
+- [x] **BENCH-04**: bench_scale_ingest — 100K nodes, 1M edges, throughput measurement
+- [x] **BENCH-05**: bench_scale_frame_query — query latency with large DiffCollections
+- [x] **BENCH-06**: bench_scale_set_trie_routing — Set-Trie at enterprise scale
+- [x] **BENCH-07**: bench_scale_embryonic — 100 templates, 5000 candidates
 
 ### v2 Quality
 
 - [x] **QUAL-06**: All Phase 1-10 tests still pass after each phase
 - [x] **QUAL-07**: cargo clippy zero warnings at every phase gate
 - [x] **QUAL-08**: krabnet-server and krabnet-mcp binaries compile and start
-- [ ] **QUAL-09**: cargo doc --no-deps generates clean documentation
-- [ ] **QUAL-10**: README.md updated with full architecture
+- [x] **QUAL-09**: cargo doc --no-deps generates clean documentation
+- [x] **QUAL-10**: README.md updated with full architecture
 
 ## v3 Requirements (Deferred)
 
@@ -333,22 +333,22 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | TRUNK-02 | Phase 13 | Complete |
 | BUFPOOL-01 | Phase 13 | Complete |
 | BUFPOOL-02 | Phase 13 | Complete |
-| LEARN-01 | Phase 13 | Pending |
-| LEARN-02 | Phase 13 | Pending |
+| LEARN-01 | Phase 13 | Complete |
+| LEARN-02 | Phase 13 | Complete |
 | TEST-25 | Phase 13 | Complete |
 | TEST-26 | Phase 13 | Complete |
 | TEST-27 | Phase 13 | Complete |
 | TEST-28 | Phase 13 | Complete |
 | TEST-29 | Phase 13 | Complete |
 | TEST-30 | Phase 13 | Complete |
-| TEST-31 | Phase 13 | Pending |
+| TEST-31 | Phase 13 | Complete |
 | BENCH-03 | Phase 13 | Complete |
-| BENCH-04 | Phase 13 | Pending |
-| BENCH-05 | Phase 13 | Pending |
-| BENCH-06 | Phase 13 | Pending |
-| BENCH-07 | Phase 13 | Pending |
-| QUAL-09 | Phase 13 | Pending |
-| QUAL-10 | Phase 13 | Pending |
+| BENCH-04 | Phase 13 | Complete |
+| BENCH-05 | Phase 13 | Complete |
+| BENCH-06 | Phase 13 | Complete |
+| BENCH-07 | Phase 13 | Complete |
+| QUAL-09 | Phase 13 | Complete |
+| QUAL-10 | Phase 13 | Complete |
 
 **Coverage:**
 - v1 requirements: 60 total (all Complete)

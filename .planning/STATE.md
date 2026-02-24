@@ -11,11 +11,11 @@ See: .planning/PROJECT.md (updated 2026-02-25)
 ## Current Position
 
 Phase: 13 of 13 (Scale and Optimize)
-Plan: 2/3 — completed 13-02
-Status: Completed 13-02 (Trunk Detection + Buffer Pool + Engine CMS/Trunk/BufferPool Integration)
-Last activity: 2026-02-25 — Completed plan 13-02
+Plan: 3/3 — completed 13-03
+Status: Completed 13-03 (Learned Template Weighting + Enterprise Benchmarks + README + Quality Gates)
+Last activity: 2026-02-25 — Completed plan 13-03 -- PHASE 13 COMPLETE -- ALL PHASES COMPLETE
 
-Progress: [█████████████] 97% (13-02 of 13 phases)
+Progress: [██████████████] 100% (13-03 of 13 phases)
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Progress: [█████████████] 97% (13-02 of 13 phases)
 | Phase 12 P04 | 6min | 2 tasks | 6 files |
 | Phase 13 P01 | 9min | 2 tasks | 6 files |
 | Phase 13 P02 | 10min | 3 tasks | 4 files |
+| Phase 13 P03 | 11min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -132,6 +133,10 @@ Recent decisions affecting current work:
 - [Phase 13-02]: Buffer pool auto-relief: evict 5% pages when <10% free
 - [Phase 13-02]: CMS-estimated counts replace per-frame counters in all priority_score calls
 - [Phase 13-01]: TEST-27 uses larger CMS (16384x8) for 10K-key accuracy validation (default 1024x4 too small)
+- [Phase 13-03]: PatternTemplate tracks success_count/failure_count/active with backward-compatible defaults (0, 0, true)
+- [Phase 13-03]: Deactivation threshold: success_ratio < 0.1 after 50+ total attempts
+- [Phase 13-03]: Template sorting by success_ratio descending in observe_edge for priority scanning
+- [Phase 13-03]: setup_scale_engine creates 100K node / 1M edge shared engine for BENCH-04 and BENCH-05
 
 ### Pending Todos
 
@@ -144,5 +149,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-25
-Stopped at: Completed 13-02-PLAN.md
+Stopped at: Completed 13-03-PLAN.md -- ALL PHASES COMPLETE
 Resume file: None
