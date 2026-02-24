@@ -3,7 +3,7 @@
 //! The [`CompactionWorker`] runs on a dedicated `std::thread` and processes
 //! compaction requests via a crossbeam unbounded channel. Compaction uses
 //! double-buffering: the worker acquires a read lock to clone the
-//! [`DiffCollection`], compacts the clone off-lock (the expensive step),
+//! `DiffCollection`, compacts the clone off-lock (the expensive step),
 //! then acquires a write lock only to swap the compacted collection back.
 //! This ensures readers are blocked only during the brief swap, never
 //! during the full compaction.

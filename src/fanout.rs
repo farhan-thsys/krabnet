@@ -121,7 +121,7 @@ impl Default for DeferredEvalQueue {
 
 /// Limits fan-out of frame evaluations per event, deferring excess by priority.
 ///
-/// When a mutation event affects more frames than [`max_fanout`](FanOutLimiter::max_fanout),
+/// When a mutation event affects more frames than `max_fanout`,
 /// only the highest-priority frames are evaluated immediately. The rest are
 /// queued in a [`DeferredEvalQueue`] for later processing.
 ///

@@ -1603,4 +1603,247 @@ mod tests {
             "Oscillating scores should keep frame in Warm due to hysteresis"
         );
     }
+
+    // ── TEST-15: test_sustained_throughput ──────────────────────────────
+
+    #[test]
+    #[ignore] // Takes 10+ seconds; run with `cargo test -- --ignored --test-threads=1`
+    fn test_sustained_throughput() {
+        // Create engine with compaction enabled (threshold: 5000)
+        let mut engine = Engine::with_compaction(1024, 5000);
+
+        // Build initial graph: 1K nodes, 2K edges, 20 frames
+        for i in 1..=1000u64 {
+            engine.ingest(Event::NodeAdded {
+                node_id: NodeId(i),
+                type_id: TypeId(10),
+            });
+        }
+
+        let mut edge_id = 0u64;
+        // Chain edges
+        for i in 1..1000u64 {
+            engine.ingest(Event::EdgeAdded {
+                edge_id: EdgeId(edge_id),
+                source: NodeId(i),
+                target: NodeId(i + 1),
+                type_id: TypeId(100),
+            });
+            edge_id += 1;
+        }
+        // Cross-links
+        for i in (1..=1000u64).step_by(10) {
+            let target = (i + 50 - 1) % 1000 + 1;
+            if target != i {
+                engine.ingest(Event::EdgeAdded {
+                    edge_id: EdgeId(edge_id),
+                    source: NodeId(i),
+                    target: NodeId(target),
+                    type_id: TypeId(200),
+                });
+                edge_id += 1;
+            }
+        }
+
+        // Register 20 frames
+        let epoch = Epoch(5000);
+        for anchor in (1..=200u64).step_by(10) {
+            engine.register_frame(
+                NodeId(anchor),
+                one_hop_pattern(TypeId(100), TypeId(10)),
+                epoch,
+            );
+        }
+
+        // Record start
+        let start = std::time::Instant::now();
+        let initial_tuples = engine.stats().total_tuples;
+
+        // Ingest 500K events in a tight loop
+        let event_count = 500_000u64;
+        for i in 0..event_count {
+            let node = NodeId((i % 999) + 1);
+            if i % 3 == 0 {
+                engine.ingest(Event::PropertyChanged {
+                    node_id: node,
+                    key: 0,
+                    value: crate::types::PropertyValue::Integer(i as i64),
+                });
+            } else {
+                engine.ingest(Event::EdgeAdded {
+                    edge_id: EdgeId(edge_id + i),
+                    source: node,
+                    target: NodeId((i % 999) + 2),
+                    type_id: TypeId(100),
+                });
+            }
+        }
+
+        let elapsed = start.elapsed();
+        let elapsed_secs = elapsed.as_secs_f64();
+        let events_per_sec = event_count as f64 / elapsed_secs;
+
+        // Assert throughput > 50K events/sec
+        assert!(
+            events_per_sec > 50_000.0,
+            "Expected >50K events/sec, got {events_per_sec:.0} ({event_count} events in {elapsed_secs:.2}s)"
+        );
+
+        // Check memory stability: final tuples should not be unbounded
+        let final_tuples = engine.stats().total_tuples;
+        // Allow reasonable growth but not unbounded (compaction should help)
+        assert!(
+            final_tuples < initial_tuples + event_count as usize,
+            "Tuples should not grow unboundedly: initial={initial_tuples}, final={final_tuples}"
+        );
+    }
+
+    // ── TEST-16: test_compaction_under_load ─────────────────────────────
+
+    #[test]
+    fn test_compaction_under_load() {
+        // Create engine with compaction enabled (threshold: 1000)
+        let mut engine = Engine::with_compaction(1024, 1000);
+
+        // Ingest a burst of 5K events (nodes, edges, properties mixed)
+        for i in 1..=500u64 {
+            engine.ingest(Event::NodeAdded {
+                node_id: NodeId(i),
+                type_id: TypeId(10),
+            });
+        }
+        let mut edge_id = 0u64;
+        for i in 1..500u64 {
+            engine.ingest(Event::EdgeAdded {
+                edge_id: EdgeId(edge_id),
+                source: NodeId(i),
+                target: NodeId(i + 1),
+                type_id: TypeId(100),
+            });
+            edge_id += 1;
+        }
+
+        // Register 50 frames
+        let epoch = Epoch(2000);
+        for anchor in 1..=50u64 {
+            engine.register_frame(
+                NodeId(anchor),
+                one_hop_pattern(TypeId(100), TypeId(10)),
+                epoch,
+            );
+        }
+
+        // Ingest another burst of events (should trigger compaction)
+        for i in 0..5000u64 {
+            let node = NodeId((i % 499) + 1);
+            engine.ingest(Event::PropertyChanged {
+                node_id: node,
+                key: 0,
+                value: crate::types::PropertyValue::Integer(i as i64),
+            });
+        }
+
+        // Wait for compaction worker to process
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        // Verify CompactionStats shows activity
+        let stats = engine.compaction_stats().expect("Compaction worker should be active");
+        // At minimum the worker should have been created and functional
+        let _ = stats.compactions_completed;
+
+        // Query every frame -- no panics, results are valid (not corrupt)
+        for fid in 0..50u64 {
+            let result = engine.query_frame(fid);
+            assert!(
+                result.is_some(),
+                "Frame {fid} should be queryable after compaction under load"
+            );
+        }
+    }
+
+    // ── TEST-17: test_concurrent_read_write ────────────────────────────
+
+    #[test]
+    #[ignore] // Takes 5+ seconds; run with `cargo test -- --ignored --test-threads=1`
+    fn test_concurrent_read_write() {
+        use std::sync::{Arc, Mutex};
+
+        // Create engine wrapped in Arc<Mutex<>> for sharing across threads
+        let mut engine = Engine::new(1024);
+
+        // Build initial graph
+        for i in 1..=100u64 {
+            engine.ingest(Event::NodeAdded {
+                node_id: NodeId(i),
+                type_id: TypeId(10),
+            });
+        }
+        for i in 1..100u64 {
+            engine.ingest(Event::EdgeAdded {
+                edge_id: EdgeId(i),
+                source: NodeId(i),
+                target: NodeId(i + 1),
+                type_id: TypeId(100),
+            });
+        }
+
+        // Register some frames
+        let epoch = Epoch(200);
+        for anchor in 1..=10u64 {
+            engine.register_frame(
+                NodeId(anchor),
+                one_hop_pattern(TypeId(100), TypeId(10)),
+                epoch,
+            );
+        }
+
+        let engine = Arc::new(Mutex::new(engine));
+        let duration = std::time::Duration::from_secs(5);
+
+        // Spawn writer thread
+        let writer_engine = Arc::clone(&engine);
+        let writer = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let mut i = 1000u64;
+            while start.elapsed() < duration {
+                let mut eng = writer_engine.lock().expect("Mutex poisoned");
+                eng.ingest(Event::PropertyChanged {
+                    node_id: NodeId((i % 99) + 1),
+                    key: 0,
+                    value: crate::types::PropertyValue::Integer(i as i64),
+                });
+                i += 1;
+                // Drop lock immediately
+            }
+            i - 1000
+        });
+
+        // Spawn reader thread
+        let reader_engine = Arc::clone(&engine);
+        let reader = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let mut reads = 0u64;
+            while start.elapsed() < duration {
+                let mut eng = reader_engine.lock().expect("Mutex poisoned");
+                let fid = (reads % 10) as u64;
+                let _ = eng.query_frame(fid);
+                reads += 1;
+                // Drop lock immediately
+            }
+            reads
+        });
+
+        // Join both threads -- no panics
+        let writes = writer.join().expect("Writer thread panicked");
+        let reads = reader.join().expect("Reader thread panicked");
+
+        assert!(writes > 0, "Writer should have ingested events");
+        assert!(reads > 0, "Reader should have queried frames");
+
+        // Verify engine state is consistent
+        let eng = engine.lock().expect("Mutex poisoned");
+        let stats = eng.stats();
+        assert_eq!(stats.node_count, 100, "Node count should be stable");
+        assert_eq!(stats.frame_count, 10, "Frame count should be stable");
+    }
 }

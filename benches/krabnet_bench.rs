@@ -277,6 +277,85 @@ fn bench_compaction(c: &mut Criterion) {
     });
 }
 
+/// Benchmark: concurrent ingest with the full hardened engine (compaction enabled).
+///
+/// Measures throughput of 100 event ingestions through the full pipeline
+/// with compaction worker active. Uses `iter_batched` with `SmallInput`
+/// to isolate setup cost from measurement.
+fn bench_concurrent_ingest(c: &mut Criterion) {
+    c.bench_function("concurrent_ingest", |b| {
+        b.iter_batched(
+            || {
+                // Setup: Create hardened engine with compaction at 5000 tuples
+                let mut eng =
+                    krabnet::engine::Engine::with_config(1024, Some(5000), None, None);
+
+                // Add 100 nodes
+                for i in 1..=100u64 {
+                    eng.ingest(Event::NodeAdded {
+                        node_id: NodeId(i),
+                        type_id: match i % 3 {
+                            0 => TypeId(30),
+                            1 => TypeId(10),
+                            _ => TypeId(20),
+                        },
+                    });
+                }
+
+                // Add 200 edges (chain + cross-links)
+                let mut edge_counter = 0u64;
+                for i in 1..100u64 {
+                    eng.ingest(Event::EdgeAdded {
+                        edge_id: EdgeId(edge_counter),
+                        source: NodeId(i),
+                        target: NodeId(i + 1),
+                        type_id: TypeId(100),
+                    });
+                    edge_counter += 1;
+                }
+                for i in (1..=100u64).step_by(5) {
+                    let target = (i + 10 - 1) % 100 + 1;
+                    if target != i {
+                        eng.ingest(Event::EdgeAdded {
+                            edge_id: EdgeId(edge_counter),
+                            source: NodeId(i),
+                            target: NodeId(target),
+                            type_id: TypeId(200),
+                        });
+                        edge_counter += 1;
+                    }
+                }
+
+                // Register 10 frames
+                let epoch = Epoch(edge_counter + 100);
+                for anchor_val in [1u64, 10, 20, 30, 40, 50, 60, 70, 80, 90] {
+                    let pattern = vec![HopSpec {
+                        direction: Direction::Outgoing,
+                        edge_type: Some(TypeId(100)),
+                        target_type: None,
+                        filter: Filter::None,
+                    }];
+                    eng.register_frame(NodeId(anchor_val), pattern, epoch);
+                }
+
+                (eng, edge_counter)
+            },
+            |(mut eng, edge_counter)| {
+                // Measured: Ingest 100 events through the full pipeline
+                for i in 0..100u64 {
+                    eng.ingest(black_box(Event::EdgeAdded {
+                        edge_id: EdgeId(edge_counter + i + 1000),
+                        source: NodeId((i % 99) + 1),
+                        target: NodeId((i % 99) + 2),
+                        type_id: TypeId(100),
+                    }));
+                }
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
+
 criterion_group!(
     benches,
     bench_ingest_event,
@@ -285,5 +364,6 @@ criterion_group!(
     bench_tier1_check,
     bench_embryonic_observe,
     bench_compaction,
+    bench_concurrent_ingest,
 );
 criterion_main!(benches);
