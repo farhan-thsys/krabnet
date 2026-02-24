@@ -89,12 +89,12 @@ Plans:
   6. Enterprise benchmarks run at scale: 100K nodes, 1M edges, 500 frames, report throughput and latency
   7. All Phase 1-12 tests still pass; cargo clippy zero warnings
   8. README.md reflects full architecture including all v2.0 features
-**Plans**: TBD
+**Plans**: 3 plans (2 waves)
 
 Plans:
-- [ ] 13-01-PLAN.md — Set-Trie inverted index + Count-Min Sketch
-- [ ] 13-02-PLAN.md — Trunk/leaf detection + buffer pool manager
-- [ ] 13-03-PLAN.md — Learned template weighting + enterprise benchmarks + README
+- [ ] 13-01-PLAN.md — Set-Trie inverted index + Count-Min Sketch data structures + InvertedIndex integration + CMS prioritizer (Wave 1)
+- [ ] 13-02-PLAN.md — Trunk/leaf detection with Hot pinning + custom buffer pool with graph-aware eviction (Wave 1)
+- [ ] 13-03-PLAN.md — Learned template weighting + enterprise benchmarks + README + quality gates (Wave 2)
 
 ## Progress
 
