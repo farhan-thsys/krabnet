@@ -15,8 +15,10 @@
 //! - [`ring_buffer`] -- Lock-free pre-allocated ring buffer for event ingestion
 //! - [`graph`] -- In-memory property graph with adjacency-on-node storage
 //! - [`diff`] -- Differential MVCC collection with +1/-1 multiset math
+//! - [`frame`] -- Parked traversers with multi-hop DFS materialization
 
 pub mod diff;
+pub mod frame;
 pub mod graph;
 pub mod interner;
 pub mod ring_buffer;
@@ -25,6 +27,7 @@ pub mod types;
 
 // Re-export core types for ergonomic use: `use krabnet::*`
 pub use diff::DiffCollection;
+pub use frame::Frame;
 pub use graph::Graph;
 pub use interner::Interner;
 pub use ring_buffer::RingBuffer;
