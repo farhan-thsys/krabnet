@@ -68,7 +68,7 @@ Each task was committed atomically:
 
 1. **Task 1: Implement Tier3Worker with LlmClient trait, prompt serialization, and bounded channel** - `f4ad77d` (feat)
 
-**Plan metadata:** [pending] (docs: complete plan)
+**Plan metadata:** `28ae472` (docs: complete plan)
 
 ## Files Created/Modified
 - `src/tier3.rs` - Tier3Worker, LlmClient trait, MockLlmClient, Tier3Sender, Tier2Result, Tier3Interpretation, serialize_prompt, 3 tests
