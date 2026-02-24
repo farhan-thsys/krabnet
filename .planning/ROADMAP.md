@@ -18,9 +18,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Differential MVCC Engine** - Mathematically exact +1/-1 multiset collection with compaction, temporal snapshots, and net delta computation (completed 2026-02-24)
 - [x] **Phase 5: Frame Materialization** - Parked traversers with multi-hop DFS materialization, delta application, eviction, and re-materialization (completed 2026-02-24)
 - [x] **Phase 6: Signal Routing** - Inverted index mapping node IDs and edge keys to affected frame sets for O(affected) event routing (completed 2026-02-24)
-- [ ] **Phase 7: Interpretation and Adaptive Tiering** - Two-tier signal interpretation (binary + structural) and hot/warm/cold frame priority scoring
-- [ ] **Phase 8: Embryonic Frame Discovery** - Autonomous pattern detection from mutation stream with bitvec completion tracking and auto-promotion
-- [ ] **Phase 9: Engine Orchestration** - Top-level Engine struct wiring all components into the full ingest-update-maintain-interpret pipeline
+- [x] **Phase 7: Interpretation and Adaptive Tiering** - Two-tier signal interpretation (binary + structural) and hot/warm/cold frame priority scoring (completed 2026-02-24)
+- [x] **Phase 8: Embryonic Frame Discovery** - Autonomous pattern detection from mutation stream with bitvec completion tracking and auto-promotion (completed 2026-02-24)
+- [x] **Phase 9: Engine Orchestration** - Top-level Engine struct wiring all components into the full ingest-update-maintain-interpret pipeline (completed 2026-02-24)
 - [x] **Phase 10: Benchmarks and Quality** - Criterion benchmarks, clippy compliance, documentation coverage, and final quality gates (completed 2026-02-24)
 
 ## Phase Details
@@ -191,12 +191,12 @@ Note: Phases 2, 3, and 4 all depend only on Phase 1. Phases 6, 7, and 8 all depe
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Core Types and String Interning | 0/TBD | Complete    | 2026-02-24 |
-| 2. Epoch Sequencer and Ring Buffer | 1/1 | Complete   | 2026-02-24 |
-| 3. Property Graph Storage | 1/1 | Complete | 2026-02-24 |
-| 4. Differential MVCC Engine | 1/1 | Complete | 2026-02-24 |
-| 5. Frame Materialization | 1/1 | Complete | 2026-02-24 |
-| 6. Signal Routing | 1/1 | Complete | 2026-02-24 |
-| 7. Interpretation and Adaptive Tiering | 0/TBD | Not started | - |
-| 8. Embryonic Frame Discovery | 0/TBD | Not started | - |
-| 9. Engine Orchestration | 0/TBD | Not started | - |
-| 10. Benchmarks and Quality | 1/1 | Complete   | 2026-02-24 |
+| 2. Epoch Sequencer and Ring Buffer | 1/1 | Complete    | 2026-02-24 |
+| 3. Property Graph Storage | 1/1 | Complete    | 2026-02-24 |
+| 4. Differential MVCC Engine | 1/1 | Complete    | 2026-02-24 |
+| 5. Frame Materialization | 1/1 | Complete    | 2026-02-24 |
+| 6. Signal Routing | 1/1 | Complete    | 2026-02-24 |
+| 7. Interpretation and Adaptive Tiering | 0/TBD | Complete    | 2026-02-24 |
+| 8. Embryonic Frame Discovery | 0/TBD | Complete    | 2026-02-24 |
+| 9. Engine Orchestration | 0/TBD | Complete    | 2026-02-24 |
+| 10. Benchmarks and Quality | 1/1 | Complete    | 2026-02-24 |
