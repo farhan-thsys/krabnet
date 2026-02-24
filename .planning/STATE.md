@@ -11,18 +11,18 @@ See: .planning/PROJECT.md (updated 2026-02-25)
 ## Current Position
 
 Phase: 12 of 13 (Production Interface)
-Plan: 3/4 — completed 12-03
-Status: Completed 12-03 (Tier 3 LLM integration)
-Last activity: 2026-02-25 — Completed plan 12-03
+Plan: 4/4 — completed 12-04
+Status: Completed 12-04 (WAL + Auto-decomposition + Server binary) -- Phase 12 COMPLETE
+Last activity: 2026-02-25 — Completed plan 12-04
 
-Progress: [████████████░] 92% (12-03 of 13 phases)
+Progress: [████████████░] 92% (12-04 of 13 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 15
+- Total plans completed: 16
 - Average duration: 5 min
-- Total execution time: 1.20 hours
+- Total execution time: 1.30 hours
 
 **By Phase:**
 
@@ -39,10 +39,10 @@ Progress: [████████████░] 92% (12-03 of 13 phases)
 | 9 - Engine Orchestration | 1 | 3 min | 3 min |
 | 10 - Benchmarks & Quality | 1 | 4 min | 4 min |
 | 11 - Harden the Engine | 3 | 25 min | 8 min |
-| 12 - Production Interface | 3 | 17 min | 6 min |
+| 12 - Production Interface | 4 | 23 min | 6 min |
 
 **Recent Trend:**
-- Last 5 plans: 7m, 10m, 13m, 0m, 4m
+- Last 5 plans: 10m, 13m, 0m, 4m, 6m
 - Trend: stable
 
 *Updated after each plan completion*
@@ -52,6 +52,7 @@ Progress: [████████████░] 92% (12-03 of 13 phases)
 | Phase 12 P01 | 13min | 2 tasks | 7 files |
 | Phase 12 P03 | 4min | 1 tasks | 1 files |
 | Phase 12 P02 | 6min | 2 tasks | 4 files |
+| Phase 12 P04 | 6min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -117,6 +118,10 @@ Recent decisions affecting current work:
 - [Phase 12-03]: Graph paths serialized as Node(X)->Node(Y) causal chains with hop count for LLM comprehension
 - [Phase 12]: McpServer owns Engine directly (not Arc<RwLock>) -- single-threaded stdio, no concurrent access needed
 - [Phase 12]: MCP tool errors returned as content with isError flag, not JSON-RPC error objects (per MCP spec)
+- [Phase 12-04]: Custom binary serialization for WAL Event (tag byte + LE fields) -- no serde binary deps needed
+- [Phase 12-04]: WalReader stops at first UnexpectedEof for crash boundary detection
+- [Phase 12-04]: WAL persistence after engine ingest (epoch assigned first, then persisted)
+- [Phase 12-04]: Auto-decomposition template IDs: (frame_id << 16) | sub_pattern_index
 
 ### Pending Todos
 
@@ -129,5 +134,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-25
-Stopped at: Completed 12-03-PLAN.md
+Stopped at: Completed 12-04-PLAN.md -- Phase 12 COMPLETE
 Resume file: None

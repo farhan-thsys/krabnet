@@ -105,17 +105,17 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### Write-Ahead Log
 
-- [ ] **WAL-01**: Append-only binary log records every Event with epoch ([u32 length][u64 epoch][serialized Event])
-- [ ] **WAL-02**: WalReader::replay() reads all entries for crash recovery state rebuild
-- [ ] **WAL-03**: Configurable fsync interval (default: every 1000 events) with explicit flush support
+- [x] **WAL-01**: Append-only binary log records every Event with epoch ([u32 length][u64 epoch][serialized Event])
+- [x] **WAL-02**: WalReader::replay() reads all entries for crash recovery state rebuild
+- [x] **WAL-03**: Configurable fsync interval (default: every 1000 events) with explicit flush support
 
 ### Embryonic Auto-Decomposition
 
-- [ ] **EMBRYO-07**: Frame registration automatically calls decompose_frame and registers all sub-patterns as embryonic templates
+- [x] **EMBRYO-07**: Frame registration automatically calls decompose_frame and registers all sub-patterns as embryonic templates
 
 ### Binary Entry Points
 
-- [ ] **BIN-01**: krabnet-server binary starts gRPC server, compaction worker, Tier 3 worker, loads WAL, graceful shutdown
+- [x] **BIN-01**: krabnet-server binary starts gRPC server, compaction worker, Tier 3 worker, loads WAL, graceful shutdown
 - [x] **BIN-02**: krabnet-mcp binary starts MCP stdio server with shared engine config
 
 ### Set-Trie Inverted Index
@@ -158,9 +158,9 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 - [x] **TEST-19**: test_mcp_tools_list — spawn MCP binary, verify 5 tools returned
 - [x] **TEST-20**: test_tier3_with_mock_llm — Tier 2 results through channel, mock LLM called, result stored
 - [x] **TEST-21**: test_tier3_channel_backpressure — fill channel, engine never blocks, excess dropped
-- [ ] **TEST-22**: test_wal_write_and_replay — 1000 events with WAL, drop engine, replay WAL, state matches
-- [ ] **TEST-23**: test_wal_crash_recovery — simulate crash, recovery up to last fsync point
-- [ ] **TEST-24**: test_auto_decomposition_on_register — 3-hop frame registration increases embryonic templates
+- [x] **TEST-22**: test_wal_write_and_replay — 1000 events with WAL, drop engine, replay WAL, state matches
+- [x] **TEST-23**: test_wal_crash_recovery — simulate crash, recovery up to last fsync point
+- [x] **TEST-24**: test_auto_decomposition_on_register — 3-hop frame registration increases embryonic templates
 - [ ] **TEST-25**: test_set_trie_correctness — 1000 sets, containment and intersection queries correct
 - [ ] **TEST-26**: test_set_trie_memory_vs_hashmap — memory comparison for 10K frames
 - [ ] **TEST-27**: test_count_min_sketch_accuracy — 10K keys, estimates within expected error bounds
@@ -182,7 +182,7 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 - [x] **QUAL-06**: All Phase 1-10 tests still pass after each phase
 - [x] **QUAL-07**: cargo clippy zero warnings at every phase gate
-- [ ] **QUAL-08**: krabnet-server and krabnet-mcp binaries compile and start
+- [x] **QUAL-08**: krabnet-server and krabnet-mcp binaries compile and start
 - [ ] **QUAL-09**: cargo doc --no-deps generates clean documentation
 - [ ] **QUAL-10**: README.md updated with full architecture
 
@@ -311,20 +311,20 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | TIER3-02 | Phase 12 | Complete |
 | TIER3-03 | Phase 12 | Complete |
 | TIER3-04 | Phase 12 | Complete |
-| WAL-01 | Phase 12 | Pending |
-| WAL-02 | Phase 12 | Pending |
-| WAL-03 | Phase 12 | Pending |
-| EMBRYO-07 | Phase 12 | Pending |
-| BIN-01 | Phase 12 | Pending |
+| WAL-01 | Phase 12 | Complete |
+| WAL-02 | Phase 12 | Complete |
+| WAL-03 | Phase 12 | Complete |
+| EMBRYO-07 | Phase 12 | Complete |
+| BIN-01 | Phase 12 | Complete |
 | BIN-02 | Phase 12 | Complete |
 | TEST-18 | Phase 12 | Complete |
 | TEST-19 | Phase 12 | Complete |
 | TEST-20 | Phase 12 | Complete |
 | TEST-21 | Phase 12 | Complete |
-| TEST-22 | Phase 12 | Pending |
-| TEST-23 | Phase 12 | Pending |
-| TEST-24 | Phase 12 | Pending |
-| QUAL-08 | Phase 12 | Pending |
+| TEST-22 | Phase 12 | Complete |
+| TEST-23 | Phase 12 | Complete |
+| TEST-24 | Phase 12 | Complete |
+| QUAL-08 | Phase 12 | Complete |
 | SETTRIE-01 | Phase 13 | Pending |
 | SETTRIE-02 | Phase 13 | Pending |
 | CMS-01 | Phase 13 | Pending |
