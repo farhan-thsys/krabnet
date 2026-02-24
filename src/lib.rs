@@ -16,12 +16,14 @@
 //! - [`graph`] -- In-memory property graph with adjacency-on-node storage
 //! - [`diff`] -- Differential MVCC collection with +1/-1 multiset math
 //! - [`frame`] -- Parked traversers with multi-hop DFS materialization
+//! - [`routing`] -- Inverted index for O(affected) event-to-frame routing
 
 pub mod diff;
 pub mod frame;
 pub mod graph;
 pub mod interner;
 pub mod ring_buffer;
+pub mod routing;
 pub mod sequencer;
 pub mod types;
 
@@ -31,5 +33,6 @@ pub use frame::Frame;
 pub use graph::Graph;
 pub use interner::Interner;
 pub use ring_buffer::RingBuffer;
+pub use routing::InvertedIndex;
 pub use sequencer::EpochSequencer;
 pub use types::*;
