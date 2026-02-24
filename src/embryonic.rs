@@ -290,3 +290,266 @@ impl EmbryonicDiscovery {
         self.templates.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Direction, Filter};
+
+    /// Helper: creates a simple HopSpec with the given direction and edge type.
+    fn hop(direction: Direction, edge_type: Option<TypeId>) -> HopSpec {
+        HopSpec {
+            direction,
+            edge_type,
+            target_type: None,
+            filter: Filter::None,
+        }
+    }
+
+    /// Helper: creates a PatternTemplate with sensible defaults.
+    fn template(id: u64, pattern: Vec<HopSpec>, threshold: f64) -> PatternTemplate {
+        PatternTemplate {
+            id,
+            pattern,
+            threshold,
+            max_candidates: 100,
+            stale_window: 10,
+        }
+    }
+
+    #[test]
+    fn register_template() {
+        let mut disco = EmbryonicDiscovery::new();
+        assert_eq!(disco.template_count(), 0);
+
+        disco.register_template(template(
+            1,
+            vec![hop(Direction::Outgoing, Some(TypeId(1)))],
+            1.0,
+        ));
+        assert_eq!(disco.template_count(), 1);
+
+        disco.register_template(template(
+            2,
+            vec![hop(Direction::Incoming, Some(TypeId(2)))],
+            0.5,
+        ));
+        assert_eq!(disco.template_count(), 2);
+    }
+
+    #[test]
+    fn decompose_two_hop() {
+        let pattern = vec![
+            hop(Direction::Outgoing, Some(TypeId(1))),
+            hop(Direction::Incoming, Some(TypeId(2))),
+        ];
+        let subs = EmbryonicDiscovery::decompose_frame(&pattern);
+        // [A,B] -> [[A,B]]
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].len(), 2);
+        assert_eq!(subs[0], pattern);
+    }
+
+    #[test]
+    fn decompose_three_hop() {
+        let a = hop(Direction::Outgoing, Some(TypeId(1)));
+        let b = hop(Direction::Incoming, Some(TypeId(2)));
+        let c = hop(Direction::Any, Some(TypeId(3)));
+        let pattern = vec![a.clone(), b.clone(), c.clone()];
+        let subs = EmbryonicDiscovery::decompose_frame(&pattern);
+        // [A,B,C] -> [[A,B], [B,C], [A,B,C]]
+        assert_eq!(subs.len(), 3);
+        assert_eq!(subs[0], vec![a.clone(), b.clone()]);
+        assert_eq!(subs[1], vec![b.clone(), c.clone()]);
+        assert_eq!(subs[2], vec![a, b, c]);
+    }
+
+    #[test]
+    fn observe_creates_candidate() {
+        let mut disco = EmbryonicDiscovery::new();
+        // Two-hop pattern, threshold 1.0 (need both hops)
+        disco.register_template(template(
+            1,
+            vec![
+                hop(Direction::Outgoing, Some(TypeId(10))),
+                hop(Direction::Outgoing, Some(TypeId(20))),
+            ],
+            1.0,
+        ));
+
+        // Observe an edge matching the first hop
+        let promoted = disco.observe_edge(
+            NodeId(1),
+            NodeId(2),
+            TypeId(10),
+            Epoch(1),
+        );
+        assert!(promoted.is_empty(), "should not promote with only 1/2 hops");
+        assert_eq!(disco.candidate_count(), 1);
+    }
+
+    #[test]
+    fn progressive_completion() {
+        let mut disco = EmbryonicDiscovery::new();
+        // Three-hop pattern, threshold 1.0
+        disco.register_template(template(
+            1,
+            vec![
+                hop(Direction::Outgoing, Some(TypeId(10))),
+                hop(Direction::Outgoing, Some(TypeId(20))),
+                hop(Direction::Outgoing, Some(TypeId(30))),
+            ],
+            1.0,
+        ));
+
+        // First hop
+        let promoted = disco.observe_edge(NodeId(1), NodeId(2), TypeId(10), Epoch(1));
+        assert!(promoted.is_empty());
+        assert_eq!(disco.candidate_count(), 1);
+
+        // Second hop
+        let promoted = disco.observe_edge(NodeId(2), NodeId(3), TypeId(20), Epoch(2));
+        assert!(promoted.is_empty());
+        // Still 1 candidate (the one we're advancing), plus possibly a new one
+        // if the second edge also matches the first hop. TypeId(20) != TypeId(10),
+        // so no new candidate is created.
+        assert_eq!(disco.candidate_count(), 1);
+
+        // Third hop -- completes the pattern
+        let promoted = disco.observe_edge(NodeId(3), NodeId(4), TypeId(30), Epoch(3));
+        assert_eq!(promoted.len(), 1);
+        assert_eq!(disco.candidate_count(), 0, "promoted candidate should be removed");
+    }
+
+    #[test]
+    fn auto_promotion_at_threshold() {
+        let mut disco = EmbryonicDiscovery::new();
+        // Two-hop pattern with 0.5 threshold (1/2 hops is enough)
+        disco.register_template(template(
+            1,
+            vec![
+                hop(Direction::Outgoing, Some(TypeId(10))),
+                hop(Direction::Outgoing, Some(TypeId(20))),
+            ],
+            0.5,
+        ));
+
+        // First hop sets bit 0 -> completion = 1/2 = 0.5 >= 0.5
+        let promoted = disco.observe_edge(NodeId(1), NodeId(2), TypeId(10), Epoch(1));
+        assert_eq!(promoted.len(), 1, "should auto-promote at 50% threshold");
+        assert_eq!(disco.candidate_count(), 0);
+    }
+
+    #[test]
+    fn promotion_returns_correct_pattern() {
+        let mut disco = EmbryonicDiscovery::new();
+        let pattern = vec![
+            hop(Direction::Outgoing, Some(TypeId(10))),
+            hop(Direction::Outgoing, Some(TypeId(20))),
+        ];
+        disco.register_template(template(1, pattern.clone(), 0.5));
+
+        let promoted = disco.observe_edge(NodeId(42), NodeId(99), TypeId(10), Epoch(1));
+        assert_eq!(promoted.len(), 1);
+        assert_eq!(promoted[0].anchor, NodeId(42));
+        assert_eq!(promoted[0].pattern, pattern);
+        assert_eq!(promoted[0].template_id, 1);
+    }
+
+    #[test]
+    fn prune_stale_candidates() {
+        let mut disco = EmbryonicDiscovery::new();
+        disco.register_template(PatternTemplate {
+            id: 1,
+            pattern: vec![
+                hop(Direction::Outgoing, Some(TypeId(10))),
+                hop(Direction::Outgoing, Some(TypeId(20))),
+            ],
+            threshold: 1.0,
+            max_candidates: 100,
+            stale_window: 5, // prune after 5 epochs without progress
+        });
+
+        // Create a candidate at epoch 1
+        disco.observe_edge(NodeId(1), NodeId(2), TypeId(10), Epoch(1));
+        assert_eq!(disco.candidate_count(), 1);
+
+        // Prune at epoch 5 -- not stale yet (5 - 1 = 4 <= 5)
+        disco.prune_stale(Epoch(5));
+        assert_eq!(disco.candidate_count(), 1);
+
+        // Prune at epoch 7 -- stale (7 - 1 = 6 > 5)
+        disco.prune_stale(Epoch(7));
+        assert_eq!(disco.candidate_count(), 0, "stale candidate should be pruned");
+    }
+
+    #[test]
+    fn enforce_cap_removes_oldest() {
+        let mut disco = EmbryonicDiscovery::new();
+        disco.register_template(PatternTemplate {
+            id: 1,
+            pattern: vec![
+                hop(Direction::Outgoing, Some(TypeId(10))),
+                hop(Direction::Outgoing, Some(TypeId(20))),
+            ],
+            threshold: 1.0,
+            max_candidates: 2,
+            stale_window: 100,
+        });
+
+        // Create 3 candidates at different epochs
+        disco.observe_edge(NodeId(1), NodeId(2), TypeId(10), Epoch(1));
+        disco.observe_edge(NodeId(3), NodeId(4), TypeId(10), Epoch(2));
+        disco.observe_edge(NodeId(5), NodeId(6), TypeId(10), Epoch(3));
+        assert_eq!(disco.candidate_count(), 3);
+
+        // Enforce cap of 2
+        disco.enforce_caps();
+        assert_eq!(disco.candidate_count(), 2, "should cap at max_candidates");
+    }
+
+    #[test]
+    fn candidate_count_tracks_total() {
+        let mut disco = EmbryonicDiscovery::new();
+        disco.register_template(template(
+            1,
+            vec![
+                hop(Direction::Outgoing, Some(TypeId(10))),
+                hop(Direction::Outgoing, Some(TypeId(20))),
+            ],
+            1.0,
+        ));
+        disco.register_template(template(
+            2,
+            vec![
+                hop(Direction::Outgoing, Some(TypeId(10))),
+                hop(Direction::Incoming, Some(TypeId(30))),
+            ],
+            1.0,
+        ));
+
+        assert_eq!(disco.candidate_count(), 0);
+
+        // Edge matching TypeId(10) matches first hop of both templates
+        disco.observe_edge(NodeId(1), NodeId(2), TypeId(10), Epoch(1));
+        assert_eq!(disco.candidate_count(), 2, "one candidate per template");
+    }
+
+    #[test]
+    fn non_matching_edge_ignored() {
+        let mut disco = EmbryonicDiscovery::new();
+        disco.register_template(template(
+            1,
+            vec![
+                hop(Direction::Outgoing, Some(TypeId(10))),
+                hop(Direction::Outgoing, Some(TypeId(20))),
+            ],
+            1.0,
+        ));
+
+        // Observe an edge with TypeId(99) which doesn't match TypeId(10)
+        let promoted = disco.observe_edge(NodeId(1), NodeId(2), TypeId(99), Epoch(1));
+        assert!(promoted.is_empty());
+        assert_eq!(disco.candidate_count(), 0, "non-matching edge creates no candidate");
+    }
+}
