@@ -179,6 +179,16 @@ impl InvertedIndex {
         result
     }
 
+    /// Returns the set of frame IDs affected by a mutation to a specific node.
+    ///
+    /// Looks up the node posting list only. Used by the coalescer integration
+    /// path where events have already been deduplicated to node IDs.
+    pub fn affected_frames_by_node(&self, node_id: NodeId) -> HashSet<u64> {
+        let mut result = HashSet::new();
+        self.collect_by_node(node_id, &mut result);
+        result
+    }
+
     /// Returns the count of unique frame IDs across all posting lists.
     ///
     /// This performs a union across all posting lists to count distinct

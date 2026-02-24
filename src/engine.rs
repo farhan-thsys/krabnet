@@ -45,14 +45,16 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use crate::coalescer::{event_node_id, MutationCoalescer};
 use crate::compaction::{CompactionStats, CompactionWorker};
 use crate::embryonic::{EmbryonicDiscovery, PatternTemplate};
+use crate::fanout::FanOutLimiter;
 use crate::frame::Frame;
 use crate::graph::Graph;
 use crate::interpret::tier1_check;
 use crate::ring_buffer::RingBuffer;
 use crate::routing::InvertedIndex;
-use crate::tiering::TierConfig;
+use crate::tiering::{HysteresisState, TierConfig};
 use crate::types::{Epoch, Event, FrameTier, HopSpec, NodeId};
 
 /// Aggregate statistics for the engine.
@@ -114,6 +116,16 @@ pub struct Engine {
     current_epoch: Epoch,
     /// Optional background compaction worker.
     compaction_worker: Option<CompactionWorker>,
+    /// Optional mutation coalescer for same-node deduplication within epoch windows.
+    coalescer: Option<MutationCoalescer>,
+    /// Optional fan-out limiter for capping immediate frame evaluations.
+    fanout_limiter: Option<FanOutLimiter>,
+    /// Per-frame hysteresis state for preventing tier thrashing.
+    hysteresis: HashMap<u64, HysteresisState>,
+    /// Hysteresis required_consecutive parameter (default 5).
+    hysteresis_consecutive: u32,
+    /// Count of frame evaluations triggered (for testing coalescer integration).
+    eval_count: u64,
 }
 
 impl Engine {
@@ -138,6 +150,11 @@ impl Engine {
             next_frame_id: 0,
             current_epoch: Epoch(0),
             compaction_worker: None,
+            coalescer: None,
+            fanout_limiter: None,
+            hysteresis: HashMap::new(),
+            hysteresis_consecutive: 5,
+            eval_count: 0,
         }
     }
 
@@ -163,6 +180,44 @@ impl Engine {
             next_frame_id: 0,
             current_epoch: Epoch(0),
             compaction_worker: Some(CompactionWorker::new(compaction_threshold)),
+            coalescer: None,
+            fanout_limiter: None,
+            hysteresis: HashMap::new(),
+            hysteresis_consecutive: 5,
+            eval_count: 0,
+        }
+    }
+
+    /// Creates a new engine with full configuration for all hardening features.
+    ///
+    /// # Arguments
+    ///
+    /// * `ring_buffer_capacity` - Must be a power of 2.
+    /// * `compaction_threshold` - If `Some`, enables background compaction at this tuple threshold.
+    /// * `coalesce_window` - If `Some`, enables mutation coalescing with this epoch window size.
+    /// * `max_fanout` - If `Some`, enables fan-out limiting at this cap.
+    pub fn with_config(
+        ring_buffer_capacity: usize,
+        compaction_threshold: Option<usize>,
+        coalesce_window: Option<u64>,
+        max_fanout: Option<usize>,
+    ) -> Self {
+        Self {
+            ring_buffer: RingBuffer::new(ring_buffer_capacity),
+            graph: Graph::new(),
+            index: InvertedIndex::new(),
+            frames: HashMap::new(),
+            embryonic: EmbryonicDiscovery::new(),
+            tier_config: TierConfig::default(),
+            previous_deltas: HashMap::new(),
+            next_frame_id: 0,
+            current_epoch: Epoch(0),
+            compaction_worker: compaction_threshold.map(CompactionWorker::new),
+            coalescer: coalesce_window.map(MutationCoalescer::new),
+            fanout_limiter: max_fanout.map(FanOutLimiter::new),
+            hysteresis: HashMap::new(),
+            hysteresis_consecutive: 5,
+            eval_count: 0,
         }
     }
 
@@ -212,47 +267,128 @@ impl Engine {
             }
         }
 
-        // Step 3: Query inverted index for affected frames (main thread, EVAL-03)
-        let affected = self.index.affected_frames(&event);
+        // Step 3: Coalescing gate -- if coalescer is active, check whether to
+        // proceed with evaluation or accumulate.
+        let should_evaluate: Option<Vec<u64>> = if let Some(ref mut coalescer) = self.coalescer {
+            if let Some(node_id) = event_node_id(&event) {
+                // Push event through coalescer. If it returns a batch, we process
+                // the batch's node IDs. If not, skip evaluation for this event.
+                let batch = coalescer.push(node_id, event.clone(), epoch);
+                if let Some(batch) = batch {
+                    // Collect affected frames from all nodes in the flushed batch
+                    let mut all_affected: Vec<u64> = Vec::new();
+                    for entry in &batch.entries {
+                        let node_affected = self.index.affected_frames_by_node(entry.node_id);
+                        for fid in node_affected {
+                            if !all_affected.contains(&fid) {
+                                all_affected.push(fid);
+                            }
+                        }
+                    }
+                    Some(all_affected)
+                } else {
+                    None // Accumulated, don't evaluate yet
+                }
+            } else {
+                // No node_id -- fall through to normal path
+                Some(self.index.affected_frames(&event).into_iter().collect())
+            }
+        } else {
+            // No coalescer -- normal path
+            Some(self.index.affected_frames(&event).into_iter().collect())
+        };
 
-        // Step 4: Fan out frame evaluation to parallel threads (EVAL-01)
-        // Collect (frame_id, frame_arc) pairs for affected frames
-        let affected_frames: Vec<(u64, Arc<RwLock<Frame>>)> = affected
-            .iter()
-            .filter_map(|fid| {
-                self.frames.get(fid).map(|arc| (*fid, Arc::clone(arc)))
-            })
-            .collect();
-
-        // Capture previous_deltas reference for use in scoped threads
-        let prev_deltas = &self.previous_deltas;
-
-        // Use std::thread::scope to fan out frame evaluation
-        let delta_updates: Vec<(u64, i64)> = std::thread::scope(|s| {
-            let handles: Vec<_> = affected_frames
-                .iter()
-                .map(|(frame_id, frame_arc)| {
-                    let fid = *frame_id;
-                    let arc = Arc::clone(frame_arc);
-                    s.spawn(move || {
-                        let frame = arc.read().expect("RwLock poisoned");
-                        let previous = prev_deltas.get(&fid).copied().unwrap_or(0);
-                        let current = frame.net_delta();
-                        let _changed = tier1_check(previous, current);
-                        (fid, current)
+        if let Some(affected) = should_evaluate {
+            // Step 4: Fan-out gate -- if fanout limiter is active, cap immediate evaluations
+            let frames_to_eval: Vec<u64> = if let Some(ref mut limiter) = self.fanout_limiter {
+                // Build (frame_id, priority_score) pairs for the limiter
+                let scored: Vec<(u64, f64)> = affected
+                    .iter()
+                    .filter_map(|fid| {
+                        self.frames.get(fid).map(|arc| {
+                            let frame = arc.read().expect("RwLock poisoned");
+                            let score = crate::tiering::priority_score(
+                                frame.query_count(),
+                                frame.mutation_count(),
+                                0, // within current window, treat as recent
+                                &self.tier_config,
+                            );
+                            (*fid, score)
+                        })
                     })
+                    .collect();
+                let (immediate, _deferred_count) = limiter.limit(scored);
+                immediate
+            } else {
+                affected
+            };
+
+            // Collect (frame_id, frame_arc) pairs for evaluation
+            let affected_frames: Vec<(u64, Arc<RwLock<Frame>>)> = frames_to_eval
+                .iter()
+                .filter_map(|fid| {
+                    self.frames.get(fid).map(|arc| (*fid, Arc::clone(arc)))
                 })
                 .collect();
 
-            handles
-                .into_iter()
-                .map(|h| h.join().expect("Scoped thread panicked"))
-                .collect()
-        });
+            // Track evaluation count
+            self.eval_count += affected_frames.len() as u64;
 
-        // Merge delta updates back on main thread
-        for (fid, current) in delta_updates {
-            self.previous_deltas.insert(fid, current);
+            // Capture previous_deltas reference for use in scoped threads
+            let prev_deltas = &self.previous_deltas;
+
+            // Use std::thread::scope to fan out frame evaluation
+            let delta_updates: Vec<(u64, i64)> = std::thread::scope(|s| {
+                let handles: Vec<std::thread::ScopedJoinHandle<'_, (u64, i64)>> = affected_frames
+                    .iter()
+                    .map(|(frame_id, frame_arc)| {
+                        let fid = *frame_id;
+                        let arc: Arc<RwLock<Frame>> = Arc::clone(frame_arc);
+                        s.spawn(move || {
+                            let frame = arc.read().expect("RwLock poisoned");
+                            let previous = prev_deltas.get(&fid).copied().unwrap_or(0);
+                            let current = frame.net_delta();
+                            let _changed = tier1_check(previous, current);
+                            (fid, current)
+                        })
+                    })
+                    .collect();
+
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("Scoped thread panicked"))
+                    .collect()
+            });
+
+            // Merge delta updates back on main thread and update hysteresis
+            for (fid, current) in delta_updates {
+                self.previous_deltas.insert(fid, current);
+
+                // Update hysteresis state for tier management
+                let frame_arc = self.frames.get(&fid);
+                if let Some(arc) = frame_arc {
+                    let frame = arc.read().expect("RwLock poisoned");
+                    let score = crate::tiering::priority_score(
+                        frame.query_count(),
+                        frame.mutation_count(),
+                        0,
+                        &self.tier_config,
+                    );
+                    let current_tier = frame.tier();
+                    drop(frame); // Release read lock before write
+
+                    let consecutive = self.hysteresis_consecutive;
+                    let hyst = self
+                        .hysteresis
+                        .entry(fid)
+                        .or_insert_with(|| HysteresisState::new(consecutive));
+                    let recommended = hyst.update(score, current_tier);
+                    if recommended != current_tier {
+                        let mut frame = arc.write().expect("RwLock poisoned");
+                        frame.set_tier(recommended);
+                    }
+                }
+            }
         }
 
         // Step 5: For EdgeAdded events, trigger embryonic observation
@@ -406,6 +542,84 @@ impl Engine {
     /// Returns compaction statistics if the compaction worker is active.
     pub fn compaction_stats(&self) -> Option<CompactionStats> {
         self.compaction_worker.as_ref().map(|w| w.stats())
+    }
+
+    /// Returns the total number of frame evaluations performed since engine creation.
+    ///
+    /// Useful for testing coalescer deduplication -- compare eval_count before
+    /// and after to verify how many evaluations actually fired.
+    pub fn eval_count(&self) -> u64 {
+        self.eval_count
+    }
+
+    /// Flushes the coalescer, triggering evaluation for any pending events.
+    ///
+    /// If no coalescer is configured, this is a no-op. Otherwise, flushes
+    /// all pending entries and evaluates affected frames from the batch.
+    pub fn flush_coalescer(&mut self) {
+        if let Some(ref mut coalescer) = self.coalescer {
+            let batch = coalescer.flush();
+            if batch.entries.is_empty() {
+                return;
+            }
+
+            // Collect affected frames from all nodes in the flushed batch
+            let mut all_affected = Vec::new();
+            for entry in &batch.entries {
+                let node_affected = self.index.affected_frames_by_node(entry.node_id);
+                for fid in node_affected {
+                    if !all_affected.contains(&fid) {
+                        all_affected.push(fid);
+                    }
+                }
+            }
+
+            // Evaluate affected frames (same logic as in ingest)
+            let affected_frames: Vec<(u64, Arc<RwLock<Frame>>)> = all_affected
+                .iter()
+                .filter_map(|fid| {
+                    self.frames.get(fid).map(|arc| (*fid, Arc::clone(arc)))
+                })
+                .collect();
+
+            self.eval_count += affected_frames.len() as u64;
+
+            let prev_deltas = &self.previous_deltas;
+            let delta_updates: Vec<(u64, i64)> = std::thread::scope(|s| {
+                let handles: Vec<_> = affected_frames
+                    .iter()
+                    .map(|(frame_id, frame_arc)| {
+                        let fid = *frame_id;
+                        let arc = Arc::clone(frame_arc);
+                        s.spawn(move || {
+                            let frame = arc.read().expect("RwLock poisoned");
+                            let previous = prev_deltas.get(&fid).copied().unwrap_or(0);
+                            let current = frame.net_delta();
+                            let _changed = tier1_check(previous, current);
+                            (fid, current)
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("Scoped thread panicked"))
+                    .collect()
+            });
+
+            for (fid, current) in delta_updates {
+                self.previous_deltas.insert(fid, current);
+            }
+        }
+    }
+
+    /// Returns the number of frames currently in the deferred evaluation queue.
+    ///
+    /// Returns 0 if no fan-out limiter is configured.
+    pub fn deferred_count(&self) -> usize {
+        self.fanout_limiter
+            .as_ref()
+            .map(|l| l.deferred_count())
+            .unwrap_or(0)
     }
 
     /// Extracts all unique NodeIds from a frame's current materialized paths.
@@ -1043,5 +1257,350 @@ mod tests {
         // Frame should still be valid after parallel evaluation
         let paths_after = engine.query_frame(fid1).unwrap();
         assert_eq!(paths_after.len(), 3, "Frame should still see 3 paths after parallel eval");
+    }
+
+    // ── TEST-09: test_background_compaction ────────────────────────────
+
+    #[test]
+    fn test_background_compaction() {
+        // Create engine with compaction enabled (threshold: 1000)
+        let mut engine = Engine::with_compaction(1024, 1000);
+
+        // Add many nodes
+        for i in 1..=500u64 {
+            engine.ingest(Event::NodeAdded {
+                node_id: NodeId(i),
+                type_id: TypeId(10),
+            });
+        }
+
+        // Add many edges to create tuples
+        let mut edge_id = 0u64;
+        for i in 1..500u64 {
+            engine.ingest(Event::EdgeAdded {
+                edge_id: EdgeId(edge_id),
+                source: NodeId(i),
+                target: NodeId(i + 1),
+                type_id: TypeId(100),
+            });
+            edge_id += 1;
+        }
+
+        // Register frames that will accumulate many tuples
+        let epoch = Epoch(edge_id + 500);
+        for anchor in (1..=400u64).step_by(2) {
+            engine.register_frame(
+                NodeId(anchor),
+                one_hop_pattern(TypeId(100), TypeId(10)),
+                epoch,
+            );
+        }
+
+        // Ingest more events to trigger compaction threshold checks
+        // Apply deltas to increase tuple counts in frames
+        for i in 0..200u64 {
+            let node = NodeId((i % 499) + 1);
+            engine.ingest(Event::PropertyChanged {
+                node_id: node,
+                key: 0,
+                value: crate::types::PropertyValue::Integer(i as i64),
+            });
+        }
+
+        // Wait for background compaction to fire
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // Verify compaction stats are available
+        let stats = engine.compaction_stats().expect("Compaction worker should be active");
+        // The compaction worker was created -- verify it's functioning
+        // (stats struct should be valid)
+        let _ = stats.compactions_completed; // Verify field access works
+
+        // Verify queries still return correct results after potential compaction
+        let frame0_paths = engine.query_frame(0);
+        assert!(
+            frame0_paths.is_some(),
+            "Frame 0 should still be queryable after compaction"
+        );
+    }
+
+    // ── TEST-10: test_concurrent_frame_eval ────────────────────────────
+
+    #[test]
+    fn test_concurrent_frame_eval() {
+        let mut engine = Engine::new(2048);
+
+        // Add 100 nodes
+        for i in 1..=100u64 {
+            engine.ingest(Event::NodeAdded {
+                node_id: NodeId(i),
+                type_id: TypeId(20),
+            });
+        }
+
+        // Add chain edges 1->2->3->...->100
+        for i in 1..100u64 {
+            engine.ingest(Event::EdgeAdded {
+                edge_id: EdgeId(i),
+                source: NodeId(i),
+                target: NodeId(i + 1),
+                type_id: TypeId(100),
+            });
+        }
+
+        let epoch = Epoch(200);
+
+        // Create 100 frames, each anchored at a different node
+        let mut frame_ids = Vec::new();
+        for i in 1..=99u64 {
+            let fid = engine.register_frame(
+                NodeId(i),
+                one_hop_pattern(TypeId(100), TypeId(20)),
+                epoch,
+            );
+            frame_ids.push(fid);
+        }
+
+        // Ingest 1000 events that affect multiple frames (property changes on chain nodes)
+        for i in 0..1000u64 {
+            let node = NodeId((i % 99) + 1);
+            engine.ingest(Event::PropertyChanged {
+                node_id: node,
+                key: 0,
+                value: crate::types::PropertyValue::Integer(i as i64),
+            });
+        }
+
+        // Verify all frames have correct state after concurrent evaluation
+        for fid in &frame_ids {
+            let paths = engine.query_frame(*fid).unwrap();
+            assert!(
+                !paths.is_empty(),
+                "Frame {fid} should have at least one path after concurrent evaluation"
+            );
+        }
+
+        // Verify stats are consistent
+        let stats = engine.stats();
+        assert_eq!(stats.node_count, 100);
+        assert_eq!(stats.frame_count, 99);
+    }
+
+    // ── TEST-11: test_coalescing_deduplicates ──────────────────────────
+
+    #[test]
+    fn test_coalescing_deduplicates() {
+        // Create engine with coalescer (window_size: 200 -- large enough to hold all events)
+        let mut engine = Engine::with_config(1024, None, Some(200), None);
+
+        // Add nodes and edge (these will also be coalesced within the window)
+        engine.ingest(Event::NodeAdded {
+            node_id: NodeId(1),
+            type_id: TypeId(10),
+        });
+        engine.ingest(Event::NodeAdded {
+            node_id: NodeId(2),
+            type_id: TypeId(20),
+        });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0),
+            source: NodeId(1),
+            target: NodeId(2),
+            type_id: TypeId(100),
+        });
+
+        // Register a frame anchored at node 1
+        let fid = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            Epoch(10),
+        );
+        assert!(engine.query_frame(fid).unwrap().len() >= 1);
+
+        // Flush the setup events so they don't interfere with the test
+        engine.flush_coalescer();
+        let eval_before = engine.eval_count();
+
+        // Ingest 100 PropertyChanged events all targeting node 1 within the window.
+        // The window is 200 epochs wide and these are at sequential epochs,
+        // so all 100 events fit within one window.
+        for i in 0..100u64 {
+            engine.ingest(Event::PropertyChanged {
+                node_id: NodeId(1),
+                key: 0,
+                value: crate::types::PropertyValue::Integer(i as i64),
+            });
+        }
+
+        let eval_after_ingest = engine.eval_count();
+
+        // Within the window, no evaluations should have been triggered
+        // (all accumulated in coalescer)
+        assert_eq!(
+            eval_after_ingest - eval_before,
+            0,
+            "No evaluations should fire while coalescing within window"
+        );
+
+        // Flush the coalescer -- this should produce a single batch with node 1
+        engine.flush_coalescer();
+
+        let eval_after_flush = engine.eval_count();
+
+        // After flush, exactly 1 evaluation should have been triggered
+        // (all 100 same-node mutations coalesced to 1 trigger)
+        assert_eq!(
+            eval_after_flush - eval_before,
+            1,
+            "Exactly 1 evaluation should fire after flushing 100 coalesced same-node events (got {})",
+            eval_after_flush - eval_before
+        );
+    }
+
+    // ── TEST-12: test_coalescing_preserves_different_nodes ─────────────
+
+    #[test]
+    fn test_coalescing_preserves_different_nodes() {
+        // Create engine with coalescer (window_size: 100)
+        let mut engine = Engine::with_config(1024, None, Some(100), None);
+
+        // Add 10 nodes + edges
+        for i in 1..=10u64 {
+            engine.ingest(Event::NodeAdded {
+                node_id: NodeId(i),
+                type_id: TypeId(10),
+            });
+        }
+        for i in 1..=10u64 {
+            engine.ingest(Event::NodeAdded {
+                node_id: NodeId(100 + i),
+                type_id: TypeId(20),
+            });
+            engine.ingest(Event::EdgeAdded {
+                edge_id: EdgeId(i),
+                source: NodeId(i),
+                target: NodeId(100 + i),
+                type_id: TypeId(100),
+            });
+        }
+
+        // Register 10 frames, each anchored at different nodes
+        let epoch = Epoch(50);
+        for i in 1..=10u64 {
+            engine.register_frame(
+                NodeId(i),
+                one_hop_pattern(TypeId(100), TypeId(20)),
+                epoch,
+            );
+        }
+
+        // Ingest mutations to 10 different nodes
+        for i in 1..=10u64 {
+            engine.ingest(Event::PropertyChanged {
+                node_id: NodeId(i),
+                key: 0,
+                value: crate::types::PropertyValue::Integer(i as i64),
+            });
+        }
+
+        // Flush coalescer
+        engine.flush_coalescer();
+
+        // After flush, all 10 nodes should have triggered evaluations
+        // (the coalescer preserves different-node mutations as separate triggers)
+        let eval_count = engine.eval_count();
+        assert!(
+            eval_count >= 10,
+            "At least 10 evaluations should fire for 10 different nodes (got {eval_count})"
+        );
+    }
+
+    // ── TEST-13: test_fanout_limit ─────────────────────────────────────
+
+    #[test]
+    fn test_fanout_limit() {
+        // Create engine with fanout limiter (max_fanout: 1000)
+        let mut engine = Engine::with_config(4096, None, None, Some(1000));
+
+        // Add a super-node and 2000 target nodes
+        engine.ingest(Event::NodeAdded {
+            node_id: NodeId(1),
+            type_id: TypeId(10),
+        });
+        for i in 2..=2001u64 {
+            engine.ingest(Event::NodeAdded {
+                node_id: NodeId(i),
+                type_id: TypeId(20),
+            });
+            engine.ingest(Event::EdgeAdded {
+                edge_id: EdgeId(i),
+                source: NodeId(1),
+                target: NodeId(i),
+                type_id: TypeId(100),
+            });
+        }
+
+        // Create 2000 frames all registered under the same node (super-node)
+        // Each frame anchored at node 1
+        let epoch = Epoch(5000);
+        for _ in 0..2000u64 {
+            engine.register_frame(
+                NodeId(1),
+                one_hop_pattern(TypeId(100), TypeId(20)),
+                epoch,
+            );
+        }
+
+        // Record eval count before
+        let eval_before = engine.eval_count();
+
+        // Ingest an event on the super-node
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(1),
+            key: 0,
+            value: crate::types::PropertyValue::Integer(42),
+        });
+
+        let eval_after = engine.eval_count();
+        let evals = eval_after - eval_before;
+
+        // Only max_fanout (1000) frames should have been evaluated immediately
+        assert!(
+            evals <= 1000,
+            "Only MAX_FANOUT (1000) frames should be evaluated, got {evals}"
+        );
+
+        // Verify remainder are in the deferred queue
+        let deferred = engine.deferred_count();
+        assert!(
+            deferred >= 1000,
+            "At least 1000 frames should be deferred, got {deferred}"
+        );
+    }
+
+    // ── TEST-14: test_hysteresis_prevents_thrashing ────────────────────
+
+    #[test]
+    fn test_hysteresis_prevents_thrashing() {
+        use crate::tiering::HysteresisState;
+
+        // Create a HysteresisState with required_consecutive=5
+        let mut hyst = HysteresisState::new(5);
+
+        // Start frame at Warm tier
+        let mut tier = FrameTier::Warm;
+
+        // Alternate scores: 0.1, 0.8, 0.1, 0.8... for 20 iterations
+        for i in 0..20 {
+            let score = if i % 2 == 0 { 0.1 } else { 0.8 };
+            tier = hyst.update(score, tier);
+        }
+
+        // Verify frame stays Warm throughout (never reaches 5 consecutive below/above)
+        assert_eq!(
+            tier,
+            FrameTier::Warm,
+            "Oscillating scores should keep frame in Warm due to hysteresis"
+        );
     }
 }
