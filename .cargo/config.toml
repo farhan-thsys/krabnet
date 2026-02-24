@@ -1,0 +1,3 @@
+# MinGW-w64 toolchain configuration
+# The GNU target needs the MinGW assembler (as.exe) on PATH for dlltool.
+# MSYS2 MinGW64 provides this at C:\msys64\mingw64\bin
