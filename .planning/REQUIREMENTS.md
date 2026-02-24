@@ -92,9 +92,9 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### MCP Server
 
-- [ ] **MCP-01**: JSON-RPC 2.0 server over stdio implementing MCP protocol (initialize, tools/list, tools/call)
-- [ ] **MCP-02**: 5 tools exposed: krabnet_ingest, krabnet_register_frame, krabnet_query_frame, krabnet_stats, krabnet_register_template
-- [ ] **MCP-03**: krabnet-mcp binary entry point initializes engine and runs MCP stdio loop
+- [x] **MCP-01**: JSON-RPC 2.0 server over stdio implementing MCP protocol (initialize, tools/list, tools/call)
+- [x] **MCP-02**: 5 tools exposed: krabnet_ingest, krabnet_register_frame, krabnet_query_frame, krabnet_stats, krabnet_register_template
+- [x] **MCP-03**: krabnet-mcp binary entry point initializes engine and runs MCP stdio loop
 
 ### Tier 3 LLM Integration
 
@@ -116,7 +116,7 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 ### Binary Entry Points
 
 - [ ] **BIN-01**: krabnet-server binary starts gRPC server, compaction worker, Tier 3 worker, loads WAL, graceful shutdown
-- [ ] **BIN-02**: krabnet-mcp binary starts MCP stdio server with shared engine config
+- [x] **BIN-02**: krabnet-mcp binary starts MCP stdio server with shared engine config
 
 ### Set-Trie Inverted Index
 
@@ -155,7 +155,7 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 - [x] **TEST-16**: test_compaction_under_load — stress test with compaction enabled
 - [x] **TEST-17**: test_concurrent_read_write — reader + writer threads for 5 seconds, no panics
 - [x] **TEST-18**: test_grpc_ingest_and_query — gRPC client ingest + query roundtrip
-- [ ] **TEST-19**: test_mcp_tools_list — spawn MCP binary, verify 5 tools returned
+- [x] **TEST-19**: test_mcp_tools_list — spawn MCP binary, verify 5 tools returned
 - [x] **TEST-20**: test_tier3_with_mock_llm — Tier 2 results through channel, mock LLM called, result stored
 - [x] **TEST-21**: test_tier3_channel_backpressure — fill channel, engine never blocks, excess dropped
 - [ ] **TEST-22**: test_wal_write_and_replay — 1000 events with WAL, drop engine, replay WAL, state matches
@@ -304,9 +304,9 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | GRPC-02 | Phase 12 | Complete |
 | GRPC-03 | Phase 12 | Complete |
 | GRPC-04 | Phase 12 | Complete |
-| MCP-01 | Phase 12 | Pending |
-| MCP-02 | Phase 12 | Pending |
-| MCP-03 | Phase 12 | Pending |
+| MCP-01 | Phase 12 | Complete |
+| MCP-02 | Phase 12 | Complete |
+| MCP-03 | Phase 12 | Complete |
 | TIER3-01 | Phase 12 | Complete |
 | TIER3-02 | Phase 12 | Complete |
 | TIER3-03 | Phase 12 | Complete |
@@ -316,9 +316,9 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | WAL-03 | Phase 12 | Pending |
 | EMBRYO-07 | Phase 12 | Pending |
 | BIN-01 | Phase 12 | Pending |
-| BIN-02 | Phase 12 | Pending |
+| BIN-02 | Phase 12 | Complete |
 | TEST-18 | Phase 12 | Complete |
-| TEST-19 | Phase 12 | Pending |
+| TEST-19 | Phase 12 | Complete |
 | TEST-20 | Phase 12 | Complete |
 | TEST-21 | Phase 12 | Complete |
 | TEST-22 | Phase 12 | Pending |

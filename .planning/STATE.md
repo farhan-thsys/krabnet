@@ -51,6 +51,7 @@ Progress: [████████████░] 92% (12-03 of 13 phases)
 | Phase 11 P03 | 10min | 2 tasks | 5 files |
 | Phase 12 P01 | 13min | 2 tasks | 7 files |
 | Phase 12 P03 | 4min | 1 tasks | 1 files |
+| Phase 12 P02 | 6min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -114,6 +115,8 @@ Recent decisions affecting current work:
 - [Phase 12-03]: Synchronous LlmClient::interpret() instead of async_trait -- worker runs in own task, production can use spawn_blocking
 - [Phase 12-03]: Bounded channel capacity 1000 with try_send drop semantics -- engine never blocks
 - [Phase 12-03]: Graph paths serialized as Node(X)->Node(Y) causal chains with hop count for LLM comprehension
+- [Phase 12]: McpServer owns Engine directly (not Arc<RwLock>) -- single-threaded stdio, no concurrent access needed
+- [Phase 12]: MCP tool errors returned as content with isError flag, not JSON-RPC error objects (per MCP spec)
 
 ### Pending Todos
 
