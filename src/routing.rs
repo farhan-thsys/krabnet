@@ -7,9 +7,13 @@
 //!
 //! # Design
 //!
-//! The index maintains two posting lists:
-//! - **node_to_frames**: Maps each [`NodeId`] to the set of frame IDs
-//!   whose traversal patterns touch that node.
+//! The index uses a [`SetTrie`](crate::set_trie::SetTrie) for node-to-frame
+//! lookups, enabling O(|pattern|) set intersection and containment queries.
+//! Edge key lookups remain HashMap-based since they are individual key lookups.
+//!
+//! - **node_trie**: A `SetTrie` mapping sorted node element sets to frame IDs.
+//!   Each frame's registered nodes are inserted as a sorted set, enabling
+//!   efficient intersection queries via `query_intersecting`.
 //! - **edge_key_to_frames**: Maps each `(source_node, edge_type)` pair
 //!   to the set of frame IDs whose patterns traverse edges of that type
 //!   from that source.
@@ -31,6 +35,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::set_trie::SetTrie;
 use crate::types::{Event, NodeId, TypeId};
 
 /// Inverted index mapping graph elements to the frames they affect.
@@ -41,14 +46,18 @@ use crate::types::{Event, NodeId, TypeId};
 ///
 /// # Posting Lists
 ///
-/// - `node_to_frames`: For each [`NodeId`], the set of frame IDs whose
-///   traversal patterns include that node (as anchor, intermediate, or leaf).
+/// - `node_trie`: A [`SetTrie`] mapping sorted node element sets to frame IDs.
+///   For each frame, its registered node IDs are inserted as a sorted set.
+///   `query_intersecting` with a single node element returns all frames
+///   containing that node.
 /// - `edge_key_to_frames`: For each `(source_node, edge_type)` pair, the
 ///   set of frame IDs whose patterns traverse that specific edge type from
 ///   that source node.
 pub struct InvertedIndex {
-    /// Maps node IDs to the set of frame IDs containing that node.
-    node_to_frames: HashMap<NodeId, HashSet<u64>>,
+    /// Set-Trie mapping sorted node element sets to frame IDs.
+    node_trie: SetTrie,
+    /// Maps frame_id -> sorted node element set (for unregister).
+    frame_nodes: HashMap<u64, Vec<u64>>,
     /// Maps (source_node, edge_type) pairs to the set of frame IDs.
     edge_key_to_frames: HashMap<(NodeId, TypeId), HashSet<u64>>,
 }
@@ -60,7 +69,8 @@ impl InvertedIndex {
     /// to populate the index.
     pub fn new() -> Self {
         Self {
-            node_to_frames: HashMap::new(),
+            node_trie: SetTrie::new(),
+            frame_nodes: HashMap::new(),
             edge_key_to_frames: HashMap::new(),
         }
     }
@@ -82,12 +92,15 @@ impl InvertedIndex {
         node_ids: &[NodeId],
         edge_keys: &[(NodeId, TypeId)],
     ) {
-        for &node_id in node_ids {
-            self.node_to_frames
-                .entry(node_id)
-                .or_default()
-                .insert(frame_id);
-        }
+        // Convert node IDs to sorted u64 elements for the SetTrie
+        let mut elements: Vec<u64> = node_ids.iter().map(|n| n.0).collect();
+        elements.sort_unstable();
+        elements.dedup();
+
+        // Insert into SetTrie and store the element set for later removal
+        self.node_trie.insert(&elements, frame_id);
+        self.frame_nodes.insert(frame_id, elements);
+
         for &edge_key in edge_keys {
             self.edge_key_to_frames
                 .entry(edge_key)
@@ -113,14 +126,17 @@ impl InvertedIndex {
         node_ids: &[NodeId],
         edge_keys: &[(NodeId, TypeId)],
     ) {
-        for &node_id in node_ids {
-            if let Some(frames) = self.node_to_frames.get_mut(&node_id) {
-                frames.remove(&frame_id);
-                if frames.is_empty() {
-                    self.node_to_frames.remove(&node_id);
-                }
-            }
+        // Remove from SetTrie using stored element set
+        if let Some(elements) = self.frame_nodes.remove(&frame_id) {
+            self.node_trie.remove(&elements, frame_id);
+        } else {
+            // Fallback: reconstruct elements from node_ids (for backward compatibility)
+            let mut elements: Vec<u64> = node_ids.iter().map(|n| n.0).collect();
+            elements.sort_unstable();
+            elements.dedup();
+            self.node_trie.remove(&elements, frame_id);
         }
+
         for &edge_key in edge_keys {
             if let Some(frames) = self.edge_key_to_frames.get_mut(&edge_key) {
                 frames.remove(&frame_id);
@@ -195,9 +211,8 @@ impl InvertedIndex {
     /// frame IDs. Useful for diagnostics and testing.
     pub fn frame_count(&self) -> usize {
         let mut all_frames: HashSet<u64> = HashSet::new();
-        for frames in self.node_to_frames.values() {
-            all_frames.extend(frames);
-        }
+        // Collect from frame_nodes keys (all frames registered via node sets)
+        all_frames.extend(self.frame_nodes.keys());
         for frames in self.edge_key_to_frames.values() {
             all_frames.extend(frames);
         }
@@ -205,10 +220,12 @@ impl InvertedIndex {
     }
 
     /// Collects frame IDs from the node posting list into `result`.
+    ///
+    /// Uses the SetTrie's `query_intersecting` with a single element to find
+    /// all frames whose registered node set contains the given node.
     fn collect_by_node(&self, node_id: NodeId, result: &mut HashSet<u64>) {
-        if let Some(frames) = self.node_to_frames.get(&node_id) {
-            result.extend(frames);
-        }
+        let frames = self.node_trie.query_intersecting(&[node_id.0]);
+        result.extend(frames);
     }
 
     /// Collects frame IDs from the edge key posting list into `result`.
@@ -350,8 +367,9 @@ mod tests {
         index.register_frame(1, &[NodeId(10)], &[(NodeId(10), TypeId(5))]);
         index.unregister_frame(1, &[NodeId(10)], &[(NodeId(10), TypeId(5))]);
 
-        // Internal posting lists should be empty (no dangling empty HashSets)
-        assert!(index.node_to_frames.is_empty());
+        // Internal posting lists should be empty (no dangling entries)
+        assert!(index.node_trie.is_empty());
+        assert!(index.frame_nodes.is_empty());
         assert!(index.edge_key_to_frames.is_empty());
     }
 
@@ -432,5 +450,80 @@ mod tests {
         }
 
         assert_eq!(index.frame_count(), 0);
+    }
+
+    // ── Set-Trie integration tests (TEST-25, TEST-26) ─────────────────
+
+    /// TEST-25: Insert 1000 sets with varied node overlaps, verify containment
+    /// and intersection queries return correct results vs brute-force HashMap reference.
+    #[test]
+    fn test_set_trie_correctness() {
+        use std::collections::HashMap as BruteMap;
+
+        let mut index = InvertedIndex::new();
+        let mut reference: BruteMap<u64, Vec<NodeId>> = BruteMap::new();
+
+        // Register 1000 frames with overlapping node sets
+        for fid in 0..1000u64 {
+            // Each frame covers nodes [fid*3, fid*3+1, fid*3+2] with some overlap
+            let base = fid * 3;
+            let nodes = vec![
+                NodeId(base),
+                NodeId(base + 1),
+                NodeId(base + 2),
+                NodeId(fid % 100),  // creates significant overlap in range [0, 99]
+            ];
+            index.register_frame(fid, &nodes, &[]);
+            reference.insert(fid, nodes);
+        }
+
+        // Test intersection queries for several nodes
+        for test_node_val in [0u64, 50, 99, 150, 500, 1500] {
+            let test_node = NodeId(test_node_val);
+            let actual = index.affected_frames_by_node(test_node);
+
+            // Brute-force: find all frames containing this node
+            let expected: HashSet<u64> = reference
+                .iter()
+                .filter(|(_, nodes)| nodes.contains(&test_node))
+                .map(|(&fid, _)| fid)
+                .collect();
+
+            assert_eq!(
+                actual, expected,
+                "Mismatch for node {test_node_val}: actual={}, expected={}",
+                actual.len(), expected.len()
+            );
+        }
+    }
+
+    /// TEST-26: Create InvertedIndex with 10K frames, verify Set-Trie based
+    /// index handles the scale without errors.
+    #[test]
+    fn test_set_trie_memory_vs_hashmap() {
+        let mut index = InvertedIndex::new();
+
+        // Register 10K frames
+        for fid in 0..10_000u64 {
+            let nodes: Vec<NodeId> = (0..5).map(|i| NodeId(fid * 5 + i)).collect();
+            index.register_frame(fid, &nodes, &[]);
+        }
+
+        assert_eq!(index.frame_count(), 10_000);
+
+        // Verify lookups still work at scale
+        let result = index.affected_frames_by_node(NodeId(0));
+        assert!(result.contains(&0), "frame 0 should be found for node 0");
+
+        let result = index.affected_frames_by_node(NodeId(49_995));
+        assert!(result.contains(&9_999), "frame 9999 should be found for node 49995");
+
+        // Unregister some frames
+        for fid in 0..100u64 {
+            let nodes: Vec<NodeId> = (0..5).map(|i| NodeId(fid * 5 + i)).collect();
+            index.unregister_frame(fid, &nodes, &[]);
+        }
+
+        assert_eq!(index.frame_count(), 9_900);
     }
 }

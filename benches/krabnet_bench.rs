@@ -356,6 +356,45 @@ fn bench_concurrent_ingest(c: &mut Criterion) {
     });
 }
 
+/// Benchmark: Set-Trie lookup with 1000 sets of 10 elements each (BENCH-03).
+fn bench_set_trie_lookup(c: &mut Criterion) {
+    use krabnet::set_trie::SetTrie;
+
+    let mut trie = SetTrie::new();
+    for fid in 0..1000u64 {
+        let elements: Vec<u64> = (fid * 10..fid * 10 + 10).collect();
+        trie.insert(&elements, fid);
+    }
+
+    c.bench_function("set_trie_lookup", |b| {
+        b.iter(|| {
+            black_box(trie.query_intersecting(black_box(&[5])));
+        });
+    });
+}
+
+/// Benchmark: HashMap posting list lookup equivalent to Set-Trie (BENCH-03).
+fn bench_hashmap_lookup(c: &mut Criterion) {
+    use std::collections::{HashMap, HashSet};
+
+    let mut map: HashMap<u64, HashSet<u64>> = HashMap::new();
+    for fid in 0..1000u64 {
+        for elem in fid * 10..fid * 10 + 10 {
+            map.entry(elem).or_default().insert(fid);
+        }
+    }
+
+    c.bench_function("hashmap_lookup", |b| {
+        b.iter(|| {
+            let result: HashSet<u64> = map
+                .get(black_box(&5))
+                .cloned()
+                .unwrap_or_default();
+            black_box(result);
+        });
+    });
+}
+
 criterion_group!(
     benches,
     bench_ingest_event,
@@ -365,5 +404,7 @@ criterion_group!(
     bench_embryonic_observe,
     bench_compaction,
     bench_concurrent_ingest,
+    bench_set_trie_lookup,
+    bench_hashmap_lookup,
 );
 criterion_main!(benches);

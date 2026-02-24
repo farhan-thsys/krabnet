@@ -26,6 +26,8 @@
 //! - [`grpc`] -- gRPC server with 8 RPC methods wrapping the engine
 //! - [`mcp`] -- MCP JSON-RPC 2.0 server with 5 tools over stdio
 //! - [`tier3`] -- Tier 3 LLM integration with bounded channel and mock client
+//! - [`set_trie`] -- Set-Trie for O(|pattern|) set containment/intersection queries
+//! - [`count_min_sketch`] -- Count-Min Sketch for probabilistic frequency counting
 //! - [`wal`] -- Write-ahead log for crash recovery with binary event persistence
 
 pub mod coalescer;

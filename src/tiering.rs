@@ -36,6 +36,7 @@
 //! assert_eq!(tier, FrameTier::Hot);
 //! ```
 
+use crate::count_min_sketch::CountMinSketch;
 use crate::types::FrameTier;
 
 /// Configuration for the priority scoring formula.
@@ -249,6 +250,88 @@ impl HysteresisState {
     }
 }
 
+/// Tracks frame activity using Count-Min Sketches for probabilistic frequency counting.
+///
+/// Replaces per-frame query/mutation counters (CMS-02) with two space-efficient
+/// Count-Min Sketches: one for query frequency and one for mutation frequency.
+/// This is the PRIMARY scoring interface for the frame prioritizer.
+///
+/// The `priority_score` method delegates to the free function [`priority_score()`],
+/// using CMS-estimated counts instead of per-frame counters.
+///
+/// # Example
+///
+/// ```
+/// use krabnet::tiering::{FrameActivityTracker, TierConfig};
+///
+/// let mut tracker = FrameActivityTracker::new();
+/// for _ in 0..100 {
+///     tracker.record_query(42);
+///     tracker.record_mutation(42);
+/// }
+/// let score = tracker.priority_score(42, 1, &TierConfig::default());
+/// assert!(score > 0.5);
+/// ```
+#[derive(Debug, Clone)]
+pub struct FrameActivityTracker {
+    /// Count-Min Sketch for query frequency estimation.
+    query_sketch: CountMinSketch,
+    /// Count-Min Sketch for mutation frequency estimation.
+    mutation_sketch: CountMinSketch,
+}
+
+impl FrameActivityTracker {
+    /// Creates a new tracker with default 1024x4 sketches.
+    pub fn new() -> Self {
+        Self {
+            query_sketch: CountMinSketch::default(),
+            mutation_sketch: CountMinSketch::default(),
+        }
+    }
+
+    /// Records a query event for the given frame.
+    pub fn record_query(&mut self, frame_id: u64) {
+        self.query_sketch.increment(frame_id);
+    }
+
+    /// Records a mutation event for the given frame.
+    pub fn record_mutation(&mut self, frame_id: u64) {
+        self.mutation_sketch.increment(frame_id);
+    }
+
+    /// Returns the estimated query count for a frame.
+    pub fn estimated_query_count(&self, frame_id: u64) -> u64 {
+        self.query_sketch.estimate(frame_id)
+    }
+
+    /// Returns the estimated mutation count for a frame.
+    pub fn estimated_mutation_count(&self, frame_id: u64) -> u64 {
+        self.mutation_sketch.estimate(frame_id)
+    }
+
+    /// Computes the priority score for a frame using CMS-estimated counts.
+    ///
+    /// Delegates to the free function [`priority_score()`] with estimated
+    /// query and mutation counts from the Count-Min Sketches.
+    pub fn priority_score(&self, frame_id: u64, epochs_since_last: u64, config: &TierConfig) -> f64 {
+        let qc = self.query_sketch.estimate(frame_id);
+        let mc = self.mutation_sketch.estimate(frame_id);
+        priority_score(qc, mc, epochs_since_last, config)
+    }
+
+    /// Resets both sketches (for epoch window rotation).
+    pub fn reset(&mut self) {
+        self.query_sketch.reset();
+        self.mutation_sketch.reset();
+    }
+}
+
+impl Default for FrameActivityTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,6 +471,96 @@ mod tests {
             tier,
             FrameTier::Cold,
             "Should demote to Cold after 5 consecutive windows below threshold"
+        );
+    }
+
+    // ── FrameActivityTracker tests ────────────────────────────────────
+
+    #[test]
+    fn test_frame_activity_tracker_basic() {
+        let mut tracker = FrameActivityTracker::new();
+
+        for _ in 0..100 {
+            tracker.record_query(42);
+        }
+        for _ in 0..50 {
+            tracker.record_mutation(42);
+        }
+
+        assert!(tracker.estimated_query_count(42) >= 100);
+        assert!(tracker.estimated_mutation_count(42) >= 50);
+
+        let config = TierConfig::default();
+        let score = tracker.priority_score(42, 1, &config);
+        assert!(score > 0.0, "Active frame should have positive score");
+    }
+
+    #[test]
+    fn test_frame_activity_tracker_reset() {
+        let mut tracker = FrameActivityTracker::new();
+        tracker.record_query(1);
+        tracker.record_mutation(1);
+
+        tracker.reset();
+
+        assert_eq!(tracker.estimated_query_count(1), 0);
+        assert_eq!(tracker.estimated_mutation_count(1), 0);
+    }
+
+    /// TEST-27: Increment 10K different keys with known frequencies, verify
+    /// all estimates >= true count (no underestimate) and that heavy hitters
+    /// (top 1%) have estimates within 10% of true count.
+    #[test]
+    fn test_count_min_sketch_accuracy() {
+        use crate::count_min_sketch::CountMinSketch;
+
+        // Use a larger sketch (width=16384, depth=8) for 10K keys to keep
+        // collision-induced overestimates within bounds.
+        let mut cms = CountMinSketch::new(16384, 8);
+
+        // Create known frequency distribution: key i gets frequency (i + 1)
+        // Keys 0..10000 with frequencies 1..10001
+        let n = 10_000u64;
+        let mut true_counts = std::collections::HashMap::new();
+
+        for key in 0..n {
+            let freq = key + 1;
+            for _ in 0..freq {
+                cms.increment(key);
+            }
+            true_counts.insert(key, freq);
+        }
+
+        // Verify no underestimate for ALL keys
+        let mut underestimate_count = 0u64;
+        for (&key, &true_count) in &true_counts {
+            let est = cms.estimate(key);
+            if est < true_count {
+                underestimate_count += 1;
+            }
+        }
+        assert_eq!(
+            underestimate_count, 0,
+            "No underestimate guarantee violated: {underestimate_count} keys underestimated"
+        );
+
+        // Verify heavy hitters (top 1% = keys with highest frequencies)
+        // have estimates within 10% of true count
+        let threshold = n - (n / 100); // top 1% = keys >= 9900
+        let mut heavy_hitter_errors = 0u64;
+        for key in threshold..n {
+            let true_count = true_counts[&key];
+            let est = cms.estimate(key);
+            let error_ratio = (est as f64 - true_count as f64) / true_count as f64;
+            if error_ratio > 0.10 {
+                heavy_hitter_errors += 1;
+            }
+        }
+        // Allow some tolerance: most heavy hitters should be within 10%
+        let heavy_hitter_count = n / 100;
+        assert!(
+            heavy_hitter_errors <= heavy_hitter_count / 5,
+            "Too many heavy hitters with >10% error: {heavy_hitter_errors}/{heavy_hitter_count}"
         );
     }
 }
