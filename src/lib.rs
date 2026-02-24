@@ -21,6 +21,7 @@
 //! - [`tiering`] -- Adaptive frame priority scoring and tier recommendation
 //! - [`embryonic`] -- Embryonic frame discovery with bitvec completion tracking
 //! - [`coalescer`] -- Mutation coalescing with epoch-window deduplication
+//! - [`fanout`] -- Fan-out limiting with priority-based deferred evaluation
 //! - [`engine`] -- Top-level orchestrator wiring all components into a single pipeline
 
 pub mod coalescer;
@@ -28,6 +29,7 @@ pub mod compaction;
 pub mod diff;
 pub mod embryonic;
 pub mod engine;
+pub mod fanout;
 pub mod frame;
 pub mod graph;
 pub mod interpret;
@@ -42,6 +44,7 @@ pub mod types;
 pub use coalescer::MutationCoalescer;
 pub use compaction::CompactionWorker;
 pub use diff::DiffCollection;
+pub use fanout::FanOutLimiter;
 pub use embryonic::EmbryonicDiscovery;
 pub use engine::Engine;
 pub use frame::Frame;

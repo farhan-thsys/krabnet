@@ -158,6 +158,97 @@ pub fn recommend_tier(score: f64) -> FrameTier {
     }
 }
 
+/// Hysteresis state for preventing tier thrashing (HYST-01).
+///
+/// Tracks consecutive windows where a frame's score is above the Hot
+/// threshold or below the Cold threshold. A tier change is only allowed
+/// after `required_consecutive` consecutive windows in the new direction.
+/// Oscillating scores reset both counters, keeping the frame in Warm.
+///
+/// # Thresholds
+///
+/// - **Hot threshold:** score > 0.7
+/// - **Cold threshold:** score < 0.2
+/// - **Neutral zone:** 0.2 <= score <= 0.7 (resets both counters)
+///
+/// # Usage
+///
+/// ```
+/// use krabnet::tiering::HysteresisState;
+/// use krabnet::FrameTier;
+///
+/// let mut hyst = HysteresisState::new(5);
+///
+/// // Score oscillates -- tier stays Warm
+/// let tier1 = hyst.update(0.8, FrameTier::Warm);
+/// let tier2 = hyst.update(0.1, FrameTier::Warm);
+/// assert_eq!(tier2, FrameTier::Warm); // not enough consecutive
+/// ```
+#[derive(Debug, Clone)]
+pub struct HysteresisState {
+    /// How many consecutive windows the score was below the Cold threshold (< 0.2).
+    consecutive_below_cold: u32,
+    /// How many consecutive windows the score was above the Hot threshold (> 0.7).
+    consecutive_above_hot: u32,
+    /// Number of consecutive windows required before allowing a tier change (HYST-02/HYST-03).
+    required_consecutive: u32,
+}
+
+impl HysteresisState {
+    /// Creates a new hysteresis state with the given consecutive window requirement.
+    ///
+    /// # Arguments
+    ///
+    /// * `required_consecutive` - Number of consecutive windows a score must
+    ///   remain above/below threshold before allowing tier change. Default: 5.
+    pub fn new(required_consecutive: u32) -> Self {
+        Self {
+            consecutive_below_cold: 0,
+            consecutive_above_hot: 0,
+            required_consecutive,
+        }
+    }
+
+    /// Updates the hysteresis state with a new score and returns the recommended tier.
+    ///
+    /// - **score > 0.7:** Increments `consecutive_above_hot`, resets `consecutive_below_cold`.
+    ///   If `consecutive_above_hot >= required_consecutive` AND `current_tier != Hot`,
+    ///   returns `Hot`. Otherwise returns `current_tier`.
+    /// - **score < 0.2:** Increments `consecutive_below_cold`, resets `consecutive_above_hot`.
+    ///   If `consecutive_below_cold >= required_consecutive` AND `current_tier != Cold`,
+    ///   returns `Cold`. Otherwise returns `current_tier`.
+    /// - **0.2 <= score <= 0.7:** Resets BOTH counters. Returns `Warm` (the safe
+    ///   middle state -- oscillating scores stay Warm per HYST-01).
+    pub fn update(&mut self, score: f64, current_tier: FrameTier) -> FrameTier {
+        if score > 0.7 {
+            self.consecutive_above_hot += 1;
+            self.consecutive_below_cold = 0;
+
+            if self.consecutive_above_hot >= self.required_consecutive
+                && current_tier != FrameTier::Hot
+            {
+                return FrameTier::Hot;
+            }
+            current_tier
+        } else if score < 0.2 {
+            self.consecutive_below_cold += 1;
+            self.consecutive_above_hot = 0;
+
+            if self.consecutive_below_cold >= self.required_consecutive
+                && current_tier != FrameTier::Cold
+            {
+                return FrameTier::Cold;
+            }
+            current_tier
+        } else {
+            // Neutral zone: reset both counters, return Warm.
+            self.consecutive_above_hot = 0;
+            self.consecutive_below_cold = 0;
+            FrameTier::Warm
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,6 +318,76 @@ mod tests {
         assert!(
             score_custom > score_default,
             "Custom ({score_custom}) should be > default ({score_default})"
+        );
+    }
+
+    // ── HysteresisState tests ─────────────────────────────────────────
+
+    /// Oscillate score between 0.1 and 0.8 each window for 20 windows.
+    /// With required_consecutive=5, tier should stay Warm (never reaches 5
+    /// consecutive below or above). This directly validates HYST-01.
+    #[test]
+    fn test_hysteresis_prevents_thrashing() {
+        let mut hyst = HysteresisState::new(5);
+        let mut tier = FrameTier::Warm;
+
+        for i in 0..20 {
+            let score = if i % 2 == 0 { 0.1 } else { 0.8 };
+            tier = hyst.update(score, tier);
+        }
+
+        assert_eq!(
+            tier,
+            FrameTier::Warm,
+            "Oscillating scores should keep frame in Warm due to hysteresis"
+        );
+    }
+
+    /// Score above 0.8 for 5 consecutive windows: verify promotion to Hot.
+    #[test]
+    fn test_hysteresis_promotes_after_consecutive() {
+        let mut hyst = HysteresisState::new(5);
+        let mut tier = FrameTier::Warm;
+
+        for _ in 0..4 {
+            tier = hyst.update(0.8, tier);
+            assert_eq!(
+                tier,
+                FrameTier::Warm,
+                "Should not promote before reaching required_consecutive"
+            );
+        }
+
+        // 5th consecutive window above threshold
+        tier = hyst.update(0.8, tier);
+        assert_eq!(
+            tier,
+            FrameTier::Hot,
+            "Should promote to Hot after 5 consecutive windows above threshold"
+        );
+    }
+
+    /// Score below 0.1 for 5 consecutive windows: verify demotion to Cold.
+    #[test]
+    fn test_hysteresis_demotes_after_consecutive() {
+        let mut hyst = HysteresisState::new(5);
+        let mut tier = FrameTier::Warm;
+
+        for _ in 0..4 {
+            tier = hyst.update(0.1, tier);
+            assert_eq!(
+                tier,
+                FrameTier::Warm,
+                "Should not demote before reaching required_consecutive"
+            );
+        }
+
+        // 5th consecutive window below threshold
+        tier = hyst.update(0.1, tier);
+        assert_eq!(
+            tier,
+            FrameTier::Cold,
+            "Should demote to Cold after 5 consecutive windows below threshold"
         );
     }
 }
