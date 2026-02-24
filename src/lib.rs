@@ -17,14 +17,18 @@
 //! - [`diff`] -- Differential MVCC collection with +1/-1 multiset math
 //! - [`frame`] -- Parked traversers with multi-hop DFS materialization
 //! - [`routing`] -- Inverted index for O(affected) event-to-frame routing
+//! - [`interpret`] -- Two-tier signal interpretation (binary + structural)
+//! - [`tiering`] -- Adaptive frame priority scoring and tier recommendation
 
 pub mod diff;
 pub mod frame;
 pub mod graph;
+pub mod interpret;
 pub mod interner;
 pub mod ring_buffer;
 pub mod routing;
 pub mod sequencer;
+pub mod tiering;
 pub mod types;
 
 // Re-export core types for ergonomic use: `use krabnet::*`
