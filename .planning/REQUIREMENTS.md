@@ -98,10 +98,10 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### Tier 3 LLM Integration
 
-- [ ] **TIER3-01**: Tier3Worker runs as separate Tokio task receiving Tier 2 results via bounded crossbeam channel (capacity: 1000)
-- [ ] **TIER3-02**: Graph-aware prompt serialization converts frame paths into natural language with causal chains
-- [ ] **TIER3-03**: LlmClient trait with async interpret() method; MockLlmClient for testing; AnthropicClient for production
-- [ ] **TIER3-04**: Bounded channel never blocks engine — excess Tier 2 results dropped when channel full
+- [x] **TIER3-01**: Tier3Worker runs as separate Tokio task receiving Tier 2 results via bounded crossbeam channel (capacity: 1000)
+- [x] **TIER3-02**: Graph-aware prompt serialization converts frame paths into natural language with causal chains
+- [x] **TIER3-03**: LlmClient trait with async interpret() method; MockLlmClient for testing; AnthropicClient for production
+- [x] **TIER3-04**: Bounded channel never blocks engine — excess Tier 2 results dropped when channel full
 
 ### Write-Ahead Log
 
@@ -156,8 +156,8 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 - [x] **TEST-17**: test_concurrent_read_write — reader + writer threads for 5 seconds, no panics
 - [x] **TEST-18**: test_grpc_ingest_and_query — gRPC client ingest + query roundtrip
 - [ ] **TEST-19**: test_mcp_tools_list — spawn MCP binary, verify 5 tools returned
-- [ ] **TEST-20**: test_tier3_with_mock_llm — Tier 2 results through channel, mock LLM called, result stored
-- [ ] **TEST-21**: test_tier3_channel_backpressure — fill channel, engine never blocks, excess dropped
+- [x] **TEST-20**: test_tier3_with_mock_llm — Tier 2 results through channel, mock LLM called, result stored
+- [x] **TEST-21**: test_tier3_channel_backpressure — fill channel, engine never blocks, excess dropped
 - [ ] **TEST-22**: test_wal_write_and_replay — 1000 events with WAL, drop engine, replay WAL, state matches
 - [ ] **TEST-23**: test_wal_crash_recovery — simulate crash, recovery up to last fsync point
 - [ ] **TEST-24**: test_auto_decomposition_on_register — 3-hop frame registration increases embryonic templates
@@ -307,10 +307,10 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | MCP-01 | Phase 12 | Pending |
 | MCP-02 | Phase 12 | Pending |
 | MCP-03 | Phase 12 | Pending |
-| TIER3-01 | Phase 12 | Pending |
-| TIER3-02 | Phase 12 | Pending |
-| TIER3-03 | Phase 12 | Pending |
-| TIER3-04 | Phase 12 | Pending |
+| TIER3-01 | Phase 12 | Complete |
+| TIER3-02 | Phase 12 | Complete |
+| TIER3-03 | Phase 12 | Complete |
+| TIER3-04 | Phase 12 | Complete |
 | WAL-01 | Phase 12 | Pending |
 | WAL-02 | Phase 12 | Pending |
 | WAL-03 | Phase 12 | Pending |
@@ -319,8 +319,8 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | BIN-02 | Phase 12 | Pending |
 | TEST-18 | Phase 12 | Complete |
 | TEST-19 | Phase 12 | Pending |
-| TEST-20 | Phase 12 | Pending |
-| TEST-21 | Phase 12 | Pending |
+| TEST-20 | Phase 12 | Complete |
+| TEST-21 | Phase 12 | Complete |
 | TEST-22 | Phase 12 | Pending |
 | TEST-23 | Phase 12 | Pending |
 | TEST-24 | Phase 12 | Pending |

@@ -11,18 +11,18 @@ See: .planning/PROJECT.md (updated 2026-02-25)
 ## Current Position
 
 Phase: 12 of 13 (Production Interface)
-Plan: 1/4 — completed 12-01
-Status: Completed 12-01 (gRPC server with 8 RPCs)
-Last activity: 2026-02-25 — Completed plan 12-01
+Plan: 3/4 — completed 12-03
+Status: Completed 12-03 (Tier 3 LLM integration)
+Last activity: 2026-02-25 — Completed plan 12-03
 
-Progress: [███████████░░] 88% (12-01 of 13 phases)
+Progress: [████████████░] 92% (12-03 of 13 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
+- Total plans completed: 15
 - Average duration: 5 min
-- Total execution time: 1.13 hours
+- Total execution time: 1.20 hours
 
 **By Phase:**
 
@@ -39,10 +39,10 @@ Progress: [███████████░░] 88% (12-01 of 13 phases)
 | 9 - Engine Orchestration | 1 | 3 min | 3 min |
 | 10 - Benchmarks & Quality | 1 | 4 min | 4 min |
 | 11 - Harden the Engine | 3 | 25 min | 8 min |
-| 12 - Production Interface | 1 | 13 min | 13 min |
+| 12 - Production Interface | 3 | 17 min | 6 min |
 
 **Recent Trend:**
-- Last 5 plans: 3m, 4m, 7m, 10m, 13m
+- Last 5 plans: 7m, 10m, 13m, 0m, 4m
 - Trend: stable
 
 *Updated after each plan completion*
@@ -50,6 +50,7 @@ Progress: [███████████░░] 88% (12-01 of 13 phases)
 | Phase 11 P02 | 7min | 2 tasks | 4 files |
 | Phase 11 P03 | 10min | 2 tasks | 5 files |
 | Phase 12 P01 | 13min | 2 tasks | 7 files |
+| Phase 12 P03 | 4min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -110,6 +111,9 @@ Recent decisions affecting current work:
 - [Phase 12-01]: KrabnetServer wraps Engine via Arc<RwLock<Engine>> -- write lock for mutations, read lock for queries
 - [Phase 12-01]: SubscribeFrame uses tokio::sync::broadcast with 1024 capacity
 - [Phase 12-01]: async-stream crate for ergonomic server-streaming SubscribeFrame implementation
+- [Phase 12-03]: Synchronous LlmClient::interpret() instead of async_trait -- worker runs in own task, production can use spawn_blocking
+- [Phase 12-03]: Bounded channel capacity 1000 with try_send drop semantics -- engine never blocks
+- [Phase 12-03]: Graph paths serialized as Node(X)->Node(Y) causal chains with hop count for LLM comprehension
 
 ### Pending Todos
 
@@ -122,5 +126,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-25
-Stopped at: Completed 12-01-PLAN.md
+Stopped at: Completed 12-03-PLAN.md
 Resume file: None
