@@ -11,10 +11,16 @@
 //! The crate is organized into modules following a strict compilation DAG:
 //! - [`types`] -- Shared newtypes and enums used by every module
 //! - [`interner`] -- Bidirectional string-to-u32 interning for zero-allocation hot path
+//! - [`sequencer`] -- Global monotonic epoch sequencer using AtomicU64
+//! - [`ring_buffer`] -- Lock-free pre-allocated ring buffer for event ingestion
 
 pub mod interner;
+pub mod ring_buffer;
+pub mod sequencer;
 pub mod types;
 
 // Re-export core types for ergonomic use: `use krabnet::*`
 pub use interner::Interner;
+pub use ring_buffer::RingBuffer;
+pub use sequencer::EpochSequencer;
 pub use types::*;
