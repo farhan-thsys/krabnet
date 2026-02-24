@@ -18,10 +18,12 @@
 //! increments the query counter. The engine's `query_frame()` takes `&mut self`.
 
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use tokio::sync::broadcast;
 use tonic::{Request, Response, Status};
+
+use crate::wal::WalWriter;
 
 /// Include generated protobuf types.
 pub mod proto {
@@ -47,13 +49,35 @@ use crate::types::{
 pub struct KrabnetServer {
     engine: Arc<RwLock<Engine>>,
     frame_tx: broadcast::Sender<proto::FrameUpdate>,
+    /// Optional WAL writer for durable event persistence.
+    /// When set, every `IngestEvent` RPC appends to the WAL before responding.
+    wal_writer: Option<Arc<Mutex<WalWriter>>>,
 }
 
 impl KrabnetServer {
     /// Create a new KrabnetServer without WAL persistence.
     pub fn new(engine: Arc<RwLock<Engine>>) -> Self {
         let (frame_tx, _) = broadcast::channel(1024);
-        Self { engine, frame_tx }
+        Self {
+            engine,
+            frame_tx,
+            wal_writer: None,
+        }
+    }
+
+    /// Create a new KrabnetServer with WAL persistence.
+    ///
+    /// Every `IngestEvent` RPC will append the event to the WAL before
+    /// responding, ensuring durability for crash recovery. The WAL writer
+    /// is shared via `Arc<Mutex<>>` so the server binary can also flush
+    /// on graceful shutdown.
+    pub fn with_wal(engine: Arc<RwLock<Engine>>, wal_writer: Arc<Mutex<WalWriter>>) -> Self {
+        let (frame_tx, _) = broadcast::channel(1024);
+        Self {
+            engine,
+            frame_tx,
+            wal_writer: Some(wal_writer),
+        }
     }
 
     /// Convert this server into a tonic gRPC service.
@@ -231,8 +255,18 @@ impl KrabnetService for KrabnetServer {
                 .engine
                 .write()
                 .map_err(|_| Status::internal("engine lock poisoned"))?;
-            engine.ingest(event)
+            engine.ingest(event.clone())
         };
+
+        // Persist to WAL if configured (after engine ingest assigns epoch)
+        if let Some(ref wal) = self.wal_writer {
+            let mut writer = wal
+                .lock()
+                .map_err(|_| Status::internal("WAL writer lock poisoned"))?;
+            writer
+                .append(epoch, &event)
+                .map_err(|e| Status::internal(format!("WAL write failed: {}", e)))?;
+        }
 
         Ok(Response::new(IngestEventResponse { epoch: epoch.0 }))
     }

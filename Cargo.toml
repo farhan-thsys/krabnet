@@ -24,6 +24,10 @@ protox = "0.7"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 [[bin]]
+name = "krabnet-server"
+path = "src/bin/krabnet-server.rs"
+
+[[bin]]
 name = "krabnet-mcp"
 path = "src/bin/krabnet-mcp.rs"
 
