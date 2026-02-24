@@ -218,3 +218,209 @@ impl Default for InvertedIndex {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{EdgeId, NodeId, PropertyValue, TypeId};
+
+    #[test]
+    fn register_and_lookup_by_node() {
+        let mut index = InvertedIndex::new();
+        let nodes = [NodeId(10), NodeId(20), NodeId(30)];
+        index.register_frame(1, &nodes, &[]);
+
+        // Each registered node should map back to frame 1
+        for &node in &nodes {
+            let event = Event::NodeAdded {
+                node_id: node,
+                type_id: TypeId(0),
+            };
+            let affected = index.affected_frames(&event);
+            assert!(affected.contains(&1), "frame 1 should be affected by node {:?}", node);
+            assert_eq!(affected.len(), 1);
+        }
+    }
+
+    #[test]
+    fn affected_frames_edge_added() {
+        let mut index = InvertedIndex::new();
+        // Frame 1 watches source node 10 and edge key (10, type 5)
+        index.register_frame(1, &[NodeId(10)], &[(NodeId(10), TypeId(5))]);
+        // Frame 2 watches target node 20
+        index.register_frame(2, &[NodeId(20)], &[]);
+
+        let event = Event::EdgeAdded {
+            edge_id: EdgeId(100),
+            source: NodeId(10),
+            target: NodeId(20),
+            type_id: TypeId(5),
+        };
+        let affected = index.affected_frames(&event);
+
+        // Frame 1 hit via source node + edge key, frame 2 hit via target node
+        assert!(affected.contains(&1));
+        assert!(affected.contains(&2));
+        assert_eq!(affected.len(), 2);
+    }
+
+    #[test]
+    fn affected_frames_deduplicated() {
+        let mut index = InvertedIndex::new();
+        // Frame 1 is registered under both source and target nodes
+        // An EdgeAdded touching both should still return frame 1 only once
+        index.register_frame(1, &[NodeId(10), NodeId(20)], &[(NodeId(10), TypeId(5))]);
+
+        let event = Event::EdgeAdded {
+            edge_id: EdgeId(100),
+            source: NodeId(10),
+            target: NodeId(20),
+            type_id: TypeId(5),
+        };
+        let affected = index.affected_frames(&event);
+
+        // Frame 1 appears via source, target, and edge key -- but deduplicated
+        assert!(affected.contains(&1));
+        assert_eq!(affected.len(), 1);
+    }
+
+    #[test]
+    fn shared_node_fan_out() {
+        let mut index = InvertedIndex::new();
+        // Three frames all share node 42
+        index.register_frame(1, &[NodeId(42)], &[]);
+        index.register_frame(2, &[NodeId(42)], &[]);
+        index.register_frame(3, &[NodeId(42)], &[]);
+
+        let event = Event::NodeAdded {
+            node_id: NodeId(42),
+            type_id: TypeId(0),
+        };
+        let affected = index.affected_frames(&event);
+
+        assert_eq!(affected.len(), 3);
+        assert!(affected.contains(&1));
+        assert!(affected.contains(&2));
+        assert!(affected.contains(&3));
+    }
+
+    #[test]
+    fn unregister_removes_from_all_lists() {
+        let mut index = InvertedIndex::new();
+        let nodes = [NodeId(10), NodeId(20)];
+        let edge_keys = [(NodeId(10), TypeId(5))];
+        index.register_frame(1, &nodes, &edge_keys);
+
+        // Verify frame is present before unregister
+        assert_eq!(index.frame_count(), 1);
+
+        index.unregister_frame(1, &nodes, &edge_keys);
+
+        // After unregister, no event should return frame 1
+        let event_node = Event::NodeAdded {
+            node_id: NodeId(10),
+            type_id: TypeId(0),
+        };
+        assert!(index.affected_frames(&event_node).is_empty());
+
+        let event_edge = Event::EdgeAdded {
+            edge_id: EdgeId(100),
+            source: NodeId(10),
+            target: NodeId(20),
+            type_id: TypeId(5),
+        };
+        assert!(index.affected_frames(&event_edge).is_empty());
+
+        assert_eq!(index.frame_count(), 0);
+    }
+
+    #[test]
+    fn unregister_cleans_empty_sets() {
+        let mut index = InvertedIndex::new();
+        index.register_frame(1, &[NodeId(10)], &[(NodeId(10), TypeId(5))]);
+        index.unregister_frame(1, &[NodeId(10)], &[(NodeId(10), TypeId(5))]);
+
+        // Internal posting lists should be empty (no dangling empty HashSets)
+        assert!(index.node_to_frames.is_empty());
+        assert!(index.edge_key_to_frames.is_empty());
+    }
+
+    #[test]
+    fn affected_frames_property_changed() {
+        let mut index = InvertedIndex::new();
+        index.register_frame(1, &[NodeId(10)], &[]);
+        index.register_frame(2, &[NodeId(20)], &[]);
+
+        let event = Event::PropertyChanged {
+            node_id: NodeId(10),
+            key: 0,
+            value: PropertyValue::Integer(42),
+        };
+        let affected = index.affected_frames(&event);
+
+        assert_eq!(affected.len(), 1);
+        assert!(affected.contains(&1));
+        // Frame 2 is NOT affected (different node)
+        assert!(!affected.contains(&2));
+    }
+
+    #[test]
+    fn affected_frames_node_removed() {
+        let mut index = InvertedIndex::new();
+        index.register_frame(1, &[NodeId(10), NodeId(20)], &[]);
+        index.register_frame(2, &[NodeId(10)], &[]);
+
+        let event = Event::NodeRemoved {
+            node_id: NodeId(10),
+        };
+        let affected = index.affected_frames(&event);
+
+        // Both frames contain node 10
+        assert_eq!(affected.len(), 2);
+        assert!(affected.contains(&1));
+        assert!(affected.contains(&2));
+    }
+
+    #[test]
+    fn empty_index_returns_empty() {
+        let index = InvertedIndex::new();
+
+        // Every event variant on an empty index should return empty
+        let events = vec![
+            Event::NodeAdded {
+                node_id: NodeId(1),
+                type_id: TypeId(0),
+            },
+            Event::NodeRemoved {
+                node_id: NodeId(1),
+            },
+            Event::EdgeAdded {
+                edge_id: EdgeId(10),
+                source: NodeId(1),
+                target: NodeId(2),
+                type_id: TypeId(1),
+            },
+            Event::EdgeRemoved {
+                edge_id: EdgeId(10),
+                source: NodeId(1),
+                target: NodeId(2),
+            },
+            Event::PropertyChanged {
+                node_id: NodeId(1),
+                key: 0,
+                value: PropertyValue::Boolean(true),
+            },
+        ];
+
+        for event in &events {
+            let affected = index.affected_frames(event);
+            assert!(
+                affected.is_empty(),
+                "empty index should return empty for {:?}",
+                event,
+            );
+        }
+
+        assert_eq!(index.frame_count(), 0);
+    }
+}
