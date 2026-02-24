@@ -1,0 +1,192 @@
+syntax = "proto3";
+package krabnet;
+
+service KrabnetService {
+  rpc IngestEvent(IngestEventRequest) returns (IngestEventResponse);
+  rpc RegisterFrame(RegisterFrameRequest) returns (RegisterFrameResponse);
+  rpc QueryFrame(QueryFrameRequest) returns (QueryFrameResponse);
+  rpc SubscribeFrame(SubscribeFrameRequest) returns (stream FrameUpdate);
+  rpc ListFrames(ListFramesRequest) returns (ListFramesResponse);
+  rpc EvictFrame(EvictFrameRequest) returns (EvictFrameResponse);
+  rpc RegisterEmbryonicTemplate(RegisterTemplateRequest) returns (RegisterTemplateResponse);
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+}
+
+// --- Direction enum ---
+
+enum Direction {
+  DIRECTION_OUTGOING = 0;
+  DIRECTION_INCOMING = 1;
+  DIRECTION_ANY = 2;
+}
+
+// --- Filter message ---
+
+message PropertyFilter {
+  uint32 key = 1;
+  oneof value {
+    int64  integer_value = 2;
+    double float_value   = 3;
+    uint32 text_value    = 4;
+    bool   boolean_value = 5;
+  }
+}
+
+message Filter {
+  oneof filter_type {
+    bool           none             = 1; // set to true for no filter
+    PropertyFilter property_equals  = 2;
+    uint32         has_property_key = 3;
+  }
+}
+
+// --- HopSpec ---
+
+message HopSpec {
+  Direction direction       = 1;
+  optional uint32 edge_type   = 2;
+  optional uint32 target_type = 3;
+  Filter filter              = 4;
+}
+
+// --- IngestEvent ---
+
+message NodeAddedEvent {
+  uint64 node_id = 1;
+  uint32 type_id = 2;
+}
+
+message NodeRemovedEvent {
+  uint64 node_id = 1;
+}
+
+message EdgeAddedEvent {
+  uint64 edge_id = 1;
+  uint64 source  = 2;
+  uint64 target  = 3;
+  uint32 type_id = 4;
+}
+
+message EdgeRemovedEvent {
+  uint64 edge_id = 1;
+  uint64 source  = 2;
+  uint64 target  = 3;
+}
+
+message PropertyChangedEvent {
+  uint64 node_id = 1;
+  uint32 key     = 2;
+  oneof value {
+    int64  integer_value = 3;
+    double float_value   = 4;
+    uint32 text_value    = 5;
+    bool   boolean_value = 6;
+  }
+}
+
+message IngestEventRequest {
+  oneof event {
+    NodeAddedEvent       node_added        = 1;
+    NodeRemovedEvent     node_removed      = 2;
+    EdgeAddedEvent       edge_added        = 3;
+    EdgeRemovedEvent     edge_removed      = 4;
+    PropertyChangedEvent property_changed  = 5;
+  }
+}
+
+message IngestEventResponse {
+  uint64 epoch = 1;
+}
+
+// --- RegisterFrame ---
+
+message RegisterFrameRequest {
+  uint64 anchor_node_id  = 1;
+  repeated HopSpec pattern = 2;
+  uint64 epoch             = 3;
+}
+
+message RegisterFrameResponse {
+  uint64 frame_id = 1;
+}
+
+// --- QueryFrame ---
+
+message QueryFrameRequest {
+  uint64 frame_id = 1;
+}
+
+message Path {
+  repeated uint64 node_ids = 1;
+}
+
+message QueryFrameResponse {
+  repeated Path paths = 1;
+}
+
+// --- SubscribeFrame ---
+
+message SubscribeFrameRequest {
+  uint64 frame_id = 1;
+}
+
+message FrameUpdate {
+  uint64 frame_id    = 1;
+  repeated Path paths = 2;
+  uint64 epoch        = 3;
+}
+
+// --- ListFrames ---
+
+message ListFramesRequest {}
+
+message FrameInfo {
+  uint64 id          = 1;
+  uint64 anchor      = 2;
+  string tier        = 3;
+  uint64 tuple_count = 4;
+}
+
+message ListFramesResponse {
+  repeated FrameInfo frames = 1;
+}
+
+// --- EvictFrame ---
+
+message EvictFrameRequest {
+  uint64 frame_id = 1;
+}
+
+message EvictFrameResponse {
+  bool success = 1;
+}
+
+// --- RegisterEmbryonicTemplate ---
+
+message RegisterTemplateRequest {
+  uint64 id                    = 1;
+  repeated HopSpec pattern     = 2;
+  double threshold             = 3;
+  uint32 max_candidates        = 4;
+  uint64 stale_window          = 5;
+}
+
+message RegisterTemplateResponse {
+  bool success = 1;
+}
+
+// --- GetStats ---
+
+message GetStatsRequest {}
+
+message GetStatsResponse {
+  uint64 node_count           = 1;
+  uint64 edge_count           = 2;
+  uint64 frame_count          = 3;
+  uint64 hot_frames           = 4;
+  uint64 warm_frames          = 5;
+  uint64 cold_frames          = 6;
+  uint64 total_tuples         = 7;
+  uint64 embryonic_candidates = 8;
+  uint64 embryonic_templates  = 9;
+}
