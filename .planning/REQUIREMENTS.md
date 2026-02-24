@@ -3,138 +3,213 @@
 **Defined:** 2026-02-24
 **Core Value:** When a signal arrives, decision-relevant context is already materialized — zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
 
-## v1 Requirements
+## v1 Requirements (Complete — Milestone v1.0)
 
-Requirements for initial release. Each maps to roadmap phases.
+All 60 v1 requirements shipped and validated. See traceability section for phase mapping.
 
 ### Core Infrastructure
 
-- [x] **INFRA-01**: System defines core types (PropertyValue, PropertySet, Direction, Filter, HopSpec, Event, DiffTuple, InterpretationTier, FrameTier) shared across all modules
-- [x] **INFRA-02**: String interner maps bidirectionally between String and u32 for property keys and type names at initialization
-- [x] **INFRA-03**: Global monotonic epoch sequencer produces strictly increasing u64 epochs via AtomicU64 with SeqCst ordering
-- [x] **INFRA-04**: Lock-free ring buffer with pre-allocated power-of-2 slots accepts events and returns assigned epochs
-- [x] **INFRA-05**: Ring buffer correctly handles slot claiming, epoch assignment, and read-after-write with correct atomic ordering
-- [x] **INFRA-06**: Ring buffer implements Send and Sync with documented safety invariants
+- [x] **INFRA-01**: System defines core types shared across all modules
+- [x] **INFRA-02**: String interner maps bidirectionally between String and u32
+- [x] **INFRA-03**: Global monotonic epoch sequencer via AtomicU64
+- [x] **INFRA-04**: Lock-free ring buffer with pre-allocated power-of-2 slots
+- [x] **INFRA-05**: Ring buffer handles slot claiming, epoch assignment, read-after-write
+- [x] **INFRA-06**: Ring buffer implements Send and Sync
 
 ### Graph Storage
 
-- [x] **GRAPH-01**: In-memory property graph stores nodes with adjacency lists (outgoing + incoming edges on each node)
-- [x] **GRAPH-02**: Node CRUD: add node (with type), remove node (cascading edge removal from neighbors), get node O(1)
-- [x] **GRAPH-03**: Edge CRUD: add edge (updates both source outgoing and target incoming), remove edge (updates both nodes)
-- [x] **GRAPH-04**: Directional neighbor queries filter by Direction (Outgoing/Incoming/Any) and optional edge type
-- [x] **GRAPH-05**: Property upsert on nodes with interned u32 keys
-- [x] **GRAPH-06**: Node count and edge count queries
+- [x] **GRAPH-01** through **GRAPH-06**: Complete property graph with CRUD, adjacency, directional queries, properties
 
 ### Differential MVCC
 
-- [x] **DIFF-01**: DiffCollection stores differential tuples (payload, epoch, delta) with +1 for assertion and -1 for retraction
-- [x] **DIFF-02**: Net delta computation per payload (sum of deltas for matching payloads) is mathematically exact
-- [x] **DIFF-03**: Aggregate net delta (sum of all deltas across all tuples) tracks frame-level state
-- [x] **DIFF-04**: Temporal snapshot returns payloads with positive net delta at or before a given epoch
-- [x] **DIFF-05**: Current state returns snapshot at u64::MAX (effectively "now")
-- [x] **DIFF-06**: Compaction groups tuples by payload below frontier epoch: annihilates net-zero, collapses survivors, warns on negative net
-- [x] **DIFF-07**: Tuple count and emptiness queries for memory pressure monitoring
+- [x] **DIFF-01** through **DIFF-07**: Complete differential collection with exact math, compaction, snapshots
 
 ### Frame System
 
-- [x] **FRAME-01**: Frame holds a multi-hop pattern (Vec<HopSpec>), anchor node, and DiffCollection of traversal paths
-- [x] **FRAME-02**: Materialize performs DFS from anchor node following hop pattern, collecting all complete paths as +1 assertions
-- [x] **FRAME-03**: Materialization filters by edge type, target node type, and property filter at each hop
-- [x] **FRAME-04**: Apply delta (+1 or -1) to frame state with cached net_delta update
-- [x] **FRAME-05**: Frame query returns current state (paths with positive net delta), incrementing query_count
-- [x] **FRAME-06**: Frame snapshot returns historical state at a given epoch
-- [x] **FRAME-07**: Frame compaction delegates to underlying DiffCollection
-- [x] **FRAME-08**: Frame eviction clears state and sets tier to Cold; re-materialization restores state
+- [x] **FRAME-01** through **FRAME-08**: Complete frame system with materialization, deltas, eviction, compaction
 
 ### Signal Routing
 
-- [x] **ROUTE-01**: Inverted index maps node IDs to sets of frame IDs containing that node
-- [x] **ROUTE-02**: Inverted index maps (source_node, edge_type) pairs to sets of frame IDs
-- [x] **ROUTE-03**: affected_frames returns deduplicated union of all frame IDs affected by a given Event
-- [x] **ROUTE-04**: Frame registration adds to all relevant posting lists; unregistration removes from all
+- [x] **ROUTE-01** through **ROUTE-04**: Complete inverted index with posting lists and affected_frames
 
-### Interpretation
+### Interpretation & Tiering
 
-- [x] **INTERP-01**: Tier 1 binary check detects when a frame's net delta changes from previous value
-- [x] **INTERP-02**: Tier 2 structural analysis identifies completed and broken hops in frame paths at a given epoch
-
-### Adaptive Tiering
-
-- [x] **TIER-01**: Frame priority scoring uses weighted combination of query frequency, mutation rate, and recency decay
-- [x] **TIER-02**: Tier recommendation classifies frames as Hot (>0.7), Warm, or Cold (<0.2) based on normalized score
+- [x] **INTERP-01**, **INTERP-02**: Two-tier interpretation (binary + structural)
+- [x] **TIER-01**, **TIER-02**: Priority scoring and tier classification
 
 ### Embryonic Frame Discovery
 
-- [x] **EMBRYO-01**: Pattern templates define multi-hop patterns to watch for with configurable promotion threshold
-- [x] **EMBRYO-02**: decompose_frame generates all sub-patterns of length >= 2 from a full frame pattern
-- [x] **EMBRYO-03**: observe_edge detects when new edges extend anchor candidates' partial paths, updating bitvec completion
-- [x] **EMBRYO-04**: Auto-promotion triggers when candidate completion_ratio meets or exceeds template threshold
-- [x] **EMBRYO-05**: Stale candidate pruning removes candidates that haven't progressed within configurable epoch window
-- [x] **EMBRYO-06**: Max candidates cap per template prevents unbounded memory growth
+- [x] **EMBRYO-01** through **EMBRYO-06**: Complete embryonic discovery with templates, bitvec, auto-promotion
 
 ### Engine Orchestration
 
-- [x] **ENGINE-01**: Ingest pipeline: push to ring buffer → apply to graph → query inverted index → maintain affected frames → run Tier 1 check
-- [x] **ENGINE-02**: EdgeAdded events trigger embryonic observe_edge; promotions auto-create new parked frames
-- [x] **ENGINE-03**: Frame registration materializes against current graph and registers in inverted index
-- [x] **ENGINE-04**: Compact all frames below a given frontier epoch
-- [x] **ENGINE-05**: Stats reporting returns node/edge/frame counts, tier distribution, tuple count, embryonic stats
+- [x] **ENGINE-01** through **ENGINE-05**: Complete engine with full ingest pipeline
 
-### Testing
+### Testing & Quality
 
-- [x] **TEST-01**: Differential tests verify assert/retract math, annihilation, double-assert, snapshots, compaction, negative delta warning
-- [x] **TEST-02**: Ring buffer tests verify push/read, sequential epochs, wraparound, unwritten-returns-none
-- [x] **TEST-03**: Graph store tests verify node/edge CRUD, cascading removal, directional neighbors, edge type filtering
-- [x] **TEST-04**: Frame tests verify 2-hop materialization, no-path case, multiple paths, delta application, evict/rematerialize
-- [x] **TEST-05**: Inverted index tests verify register/lookup, affected frames, shared node fan-out, unregister
-- [x] **TEST-06**: Embryonic tests verify template registration, decomposition, candidate creation, progressive completion, auto-promotion, pruning, cap
-- [x] **TEST-07**: Integration tests verify full pipeline, retraction pipeline, shared-node multi-frame, embryonic auto-promotion, compaction correctness
-- [x] **TEST-08**: Snapshot tests verify temporal consistency across frames at specific epochs
+- [x] **TEST-01** through **TEST-08**: 144 tests passing
+- [x] **BENCH-01**: 6 Criterion benchmarks
+- [x] **QUAL-01** through **QUAL-05**: All quality gates passing
 
-### Benchmarks
+## v2 Requirements (Milestone v2.0 — Current)
 
-- [x] **BENCH-01**: Criterion benchmarks for ingest_event, frame_query, inverted_index_lookup, tier1_check, embryonic_observe, compaction
+### Background Compaction
 
-### Quality
+- [ ] **COMPACT-01**: CompactionWorker runs on dedicated std::thread with crossbeam channel for requests
+- [ ] **COMPACT-02**: Double-buffering: clone DiffCollection, compact clone, atomic swap back via Arc<Mutex<>> (Mutex held only during swap)
+- [ ] **COMPACT-03**: Configurable tuple_count threshold (default: 10,000) triggers automatic compaction requests
+- [ ] **COMPACT-04**: CompactionStats tracks compactions_completed, tuples_before, tuples_after, total_compaction_time_us
 
-- [x] **QUAL-01**: cargo test — zero failures
-- [x] **QUAL-02**: cargo bench — all benchmarks execute and produce numbers
-- [x] **QUAL-03**: cargo doc --no-deps — generates documentation without warnings
-- [x] **QUAL-04**: cargo clippy — zero warnings
-- [x] **QUAL-05**: Every public function has a doc comment; every module has a module-level doc comment
+### Multi-Threaded Frame Evaluation
 
-## v2 Requirements
+- [ ] **EVAL-01**: Frame evaluation fans out to thread pool after single-threaded ingestion (graph store remains serialization point)
+- [ ] **EVAL-02**: Frame state wrapped in Arc<parking_lot::RwLock<Frame>> — readers take read locks, evaluators take write locks only for apply_delta
+- [ ] **EVAL-03**: Inverted index lookup stays on main thread; only frame evaluation is parallelized
 
-Deferred to future release. Tracked but not in current roadmap.
+### Mutation Coalescing
+
+- [ ] **COALESCE-01**: MutationCoalescer accumulates events within configurable epoch window (default: 16 epochs)
+- [ ] **COALESCE-02**: Same-node mutations within window collapse into single downstream trigger
+- [ ] **COALESCE-03**: CoalescedBatch output contains deduplicated (node_id, latest_event, epoch_range) tuples
+
+### Fan-Out Limits
+
+- [ ] **FANOUT-01**: Configurable MAX_FANOUT (default: 1000) limits immediate frame evaluations per event
+- [ ] **FANOUT-02**: When affected_frames exceeds MAX_FANOUT, top frames by priority_score evaluated immediately, remainder queued in DeferredEvalQueue
+
+### Frame Prioritizer Hysteresis
+
+- [ ] **HYST-01**: Consecutive threshold counters track consecutive windows above/below hot/cold thresholds
+- [ ] **HYST-02**: Frame must score below cold_threshold for N consecutive windows (default: 5) before eviction to Cold
+- [ ] **HYST-03**: Frame must score above hot_threshold for N consecutive windows before promotion to Hot
+
+### gRPC Server
+
+- [ ] **GRPC-01**: Protobuf schema defines KrabnetService with 8 RPC methods (IngestEvent, RegisterFrame, QueryFrame, SubscribeFrame, ListFrames, EvictFrame, RegisterEmbryonicTemplate, GetStats)
+- [ ] **GRPC-02**: KrabnetServer implements all 8 methods with Engine held via Arc<RwLock<Engine>>
+- [ ] **GRPC-03**: SubscribeFrame uses tokio::sync::broadcast for real-time frame update streaming
+- [ ] **GRPC-04**: build.rs compiles proto file via tonic-build
+
+### MCP Server
+
+- [ ] **MCP-01**: JSON-RPC 2.0 server over stdio implementing MCP protocol (initialize, tools/list, tools/call)
+- [ ] **MCP-02**: 5 tools exposed: krabnet_ingest, krabnet_register_frame, krabnet_query_frame, krabnet_stats, krabnet_register_template
+- [ ] **MCP-03**: krabnet-mcp binary entry point initializes engine and runs MCP stdio loop
+
+### Tier 3 LLM Integration
+
+- [ ] **TIER3-01**: Tier3Worker runs as separate Tokio task receiving Tier 2 results via bounded crossbeam channel (capacity: 1000)
+- [ ] **TIER3-02**: Graph-aware prompt serialization converts frame paths into natural language with causal chains
+- [ ] **TIER3-03**: LlmClient trait with async interpret() method; MockLlmClient for testing; AnthropicClient for production
+- [ ] **TIER3-04**: Bounded channel never blocks engine — excess Tier 2 results dropped when channel full
+
+### Write-Ahead Log
+
+- [ ] **WAL-01**: Append-only binary log records every Event with epoch ([u32 length][u64 epoch][serialized Event])
+- [ ] **WAL-02**: WalReader::replay() reads all entries for crash recovery state rebuild
+- [ ] **WAL-03**: Configurable fsync interval (default: every 1000 events) with explicit flush support
+
+### Embryonic Auto-Decomposition
+
+- [ ] **EMBRYO-07**: Frame registration automatically calls decompose_frame and registers all sub-patterns as embryonic templates
+
+### Binary Entry Points
+
+- [ ] **BIN-01**: krabnet-server binary starts gRPC server, compaction worker, Tier 3 worker, loads WAL, graceful shutdown
+- [ ] **BIN-02**: krabnet-mcp binary starts MCP stdio server with shared engine config
+
+### Set-Trie Inverted Index
+
+- [ ] **SETTRIE-01**: Set-Trie data structure with insert(set, value), query_containing(elements), query_intersecting(elements), remove(value)
+- [ ] **SETTRIE-02**: Inverted index uses Set-Trie internally while keeping same public API
+
+### Count-Min Sketch
+
+- [ ] **CMS-01**: Fixed-size width x depth matrix (default: 1024 x 4) with increment(key) and estimate(key) returning minimum across hash rows
+- [ ] **CMS-02**: Frame prioritizer uses Count-Min Sketch instead of per-frame query counters
+
+### Trunk/Leaf Detection
+
+- [ ] **TRUNK-01**: detect_trunks() identifies sub-paths shared across >= min_shared_count frames
+- [ ] **TRUNK-02**: Trunk frames pinned to Hot tier (cannot be evicted); leaf frames are eviction candidates
+
+### Custom Buffer Pool
+
+- [ ] **BUFPOOL-01**: Pre-allocated contiguous buffer (default: 256 MB) divided into fixed-size pages (default: 4 KB) with alloc/free/read/write
+- [ ] **BUFPOOL-02**: Graph-aware eviction: Cold frame pages evicted first, then Warm, never Hot
+
+### Learned Template Weighting
+
+- [ ] **LEARN-01**: Track template_success_count and template_failure_count for each embryonic template
+- [ ] **LEARN-02**: Templates sorted by success_ratio for observe_edge scanning; templates with ratio < 0.1 after 50+ promotions deactivated
+
+### v2 Testing
+
+- [ ] **TEST-09**: test_background_compaction — 50K events, verify auto-compaction fires, tuple count decreases, queries correct
+- [ ] **TEST-10**: test_concurrent_frame_eval — 100 frames, 10K events, correct state with and without thread parallelism
+- [ ] **TEST-11**: test_coalescing_deduplicates — 100 mutations to same node, only 1 downstream eval triggered
+- [ ] **TEST-12**: test_coalescing_preserves_different_nodes — mutations to 10 nodes, all 10 trigger evaluation
+- [ ] **TEST-13**: test_fanout_limit — 2000 frames on same node, only MAX_FANOUT evaluated immediately
+- [ ] **TEST-14**: test_hysteresis_prevents_thrashing — oscillating score stays in Warm
+- [ ] **TEST-15**: test_sustained_throughput — 10K nodes, 100K edges, 200 frames, 500K events, >50K events/sec, stable memory
+- [ ] **TEST-16**: test_compaction_under_load — stress test with compaction enabled
+- [ ] **TEST-17**: test_concurrent_read_write — reader + writer threads for 5 seconds, no panics
+- [ ] **TEST-18**: test_grpc_ingest_and_query — gRPC client ingest + query roundtrip
+- [ ] **TEST-19**: test_mcp_tools_list — spawn MCP binary, verify 5 tools returned
+- [ ] **TEST-20**: test_tier3_with_mock_llm — Tier 2 results through channel, mock LLM called, result stored
+- [ ] **TEST-21**: test_tier3_channel_backpressure — fill channel, engine never blocks, excess dropped
+- [ ] **TEST-22**: test_wal_write_and_replay — 1000 events with WAL, drop engine, replay WAL, state matches
+- [ ] **TEST-23**: test_wal_crash_recovery — simulate crash, recovery up to last fsync point
+- [ ] **TEST-24**: test_auto_decomposition_on_register — 3-hop frame registration increases embryonic templates
+- [ ] **TEST-25**: test_set_trie_correctness — 1000 sets, containment and intersection queries correct
+- [ ] **TEST-26**: test_set_trie_memory_vs_hashmap — memory comparison for 10K frames
+- [ ] **TEST-27**: test_count_min_sketch_accuracy — 10K keys, estimates within expected error bounds
+- [ ] **TEST-28**: test_trunk_detection — 50 frames, 30 share first 2 hops, detected as trunk, pinned
+- [ ] **TEST-29**: test_buffer_pool_alloc_free — allocate all, free half, reallocate, no corruption
+- [ ] **TEST-30**: test_buffer_pool_eviction_order — Cold evicted before Warm before Hot
+- [ ] **TEST-31**: test_learned_weighting — successful template ranks higher than failed template
+
+### v2 Benchmarks
+
+- [ ] **BENCH-02**: bench_concurrent_ingest — throughput with 4 evaluator threads
+- [ ] **BENCH-03**: bench_set_trie_lookup vs bench_hashmap_lookup — latency comparison
+- [ ] **BENCH-04**: bench_scale_ingest — 100K nodes, 1M edges, throughput measurement
+- [ ] **BENCH-05**: bench_scale_frame_query — query latency with large DiffCollections
+- [ ] **BENCH-06**: bench_scale_set_trie_routing — Set-Trie at enterprise scale
+- [ ] **BENCH-07**: bench_scale_embryonic — 100 templates, 5000 candidates
+
+### v2 Quality
+
+- [ ] **QUAL-06**: All Phase 1-10 tests still pass after each phase
+- [ ] **QUAL-07**: cargo clippy zero warnings at every phase gate
+- [ ] **QUAL-08**: krabnet-server and krabnet-mcp binaries compile and start
+- [ ] **QUAL-09**: cargo doc --no-deps generates clean documentation
+- [ ] **QUAL-10**: README.md updated with full architecture
+
+## v3 Requirements (Deferred)
+
+### Advanced Testing
+
+- **TEST-32**: loom-based concurrency testing for multi-producer scenarios
+- **TEST-33**: Miri validation for unsafe Send/Sync implementations
+- **TEST-34**: Property-based testing (proptest) for differential math
 
 ### Performance
 
-- **PERF-01**: Async background compaction (move synchronous compaction to background thread)
-- **PERF-02**: Multi-threaded event processing (multi-producer ring buffer)
-- **PERF-03**: Incremental path extension for frame maintenance (replace re-traverse approach)
-- **PERF-04**: Count-Min Sketch for query frequency tracking (replace raw counter)
-
-### Testing
-
-- **TEST-09**: loom-based concurrency testing for multi-producer scenarios
-- **TEST-10**: Miri validation for unsafe Send/Sync implementations
-- **TEST-11**: Property-based testing (proptest) for differential math
+- **PERF-01**: Incremental path extension for frame maintenance (replace re-traverse)
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Query language (Cypher, Gremlin, SPARQL) | PoC validates runtime physics, not query UX |
-| Distributed execution | Single-process PoC; distributed is a fundamentally different architecture |
-| Disk persistence | In-memory only; persistence is orthogonal to the differential MVCC hypothesis |
-| Graph algorithms (PageRank, shortest path) | Frame-based traversal replaces traditional graph algorithms |
-| External connectors (Kafka, gRPC) | PoC is a library crate, not a service |
+| Query language (Cypher, Gremlin, SPARQL) | Runtime validates physics, not query UX |
+| Distributed execution | Single-process; distributed is different architecture |
+| Graph algorithms (PageRank, shortest path) | Frame-based traversal replaces traditional algorithms |
 | Web UI or visualization | Runtime only, no presentation layer |
-| Nightly Rust features | Stable toolchain constraint is non-negotiable |
+| Nightly Rust features | Stable toolchain constraint non-negotiable |
+| External graph crates (petgraph) | All graph structures built from scratch |
 
 ## Traceability
-
-Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -198,12 +273,89 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QUAL-03 | Phase 10 | Complete |
 | QUAL-04 | Phase 10 | Complete |
 | QUAL-05 | Phase 10 | Complete |
+| COMPACT-01 | Phase 11 | Pending |
+| COMPACT-02 | Phase 11 | Pending |
+| COMPACT-03 | Phase 11 | Pending |
+| COMPACT-04 | Phase 11 | Pending |
+| EVAL-01 | Phase 11 | Pending |
+| EVAL-02 | Phase 11 | Pending |
+| EVAL-03 | Phase 11 | Pending |
+| COALESCE-01 | Phase 11 | Pending |
+| COALESCE-02 | Phase 11 | Pending |
+| COALESCE-03 | Phase 11 | Pending |
+| FANOUT-01 | Phase 11 | Pending |
+| FANOUT-02 | Phase 11 | Pending |
+| HYST-01 | Phase 11 | Pending |
+| HYST-02 | Phase 11 | Pending |
+| HYST-03 | Phase 11 | Pending |
+| TEST-09 | Phase 11 | Pending |
+| TEST-10 | Phase 11 | Pending |
+| TEST-11 | Phase 11 | Pending |
+| TEST-12 | Phase 11 | Pending |
+| TEST-13 | Phase 11 | Pending |
+| TEST-14 | Phase 11 | Pending |
+| TEST-15 | Phase 11 | Pending |
+| TEST-16 | Phase 11 | Pending |
+| TEST-17 | Phase 11 | Pending |
+| BENCH-02 | Phase 11 | Pending |
+| QUAL-06 | Phase 11 | Pending |
+| QUAL-07 | Phase 11 | Pending |
+| GRPC-01 | Phase 12 | Pending |
+| GRPC-02 | Phase 12 | Pending |
+| GRPC-03 | Phase 12 | Pending |
+| GRPC-04 | Phase 12 | Pending |
+| MCP-01 | Phase 12 | Pending |
+| MCP-02 | Phase 12 | Pending |
+| MCP-03 | Phase 12 | Pending |
+| TIER3-01 | Phase 12 | Pending |
+| TIER3-02 | Phase 12 | Pending |
+| TIER3-03 | Phase 12 | Pending |
+| TIER3-04 | Phase 12 | Pending |
+| WAL-01 | Phase 12 | Pending |
+| WAL-02 | Phase 12 | Pending |
+| WAL-03 | Phase 12 | Pending |
+| EMBRYO-07 | Phase 12 | Pending |
+| BIN-01 | Phase 12 | Pending |
+| BIN-02 | Phase 12 | Pending |
+| TEST-18 | Phase 12 | Pending |
+| TEST-19 | Phase 12 | Pending |
+| TEST-20 | Phase 12 | Pending |
+| TEST-21 | Phase 12 | Pending |
+| TEST-22 | Phase 12 | Pending |
+| TEST-23 | Phase 12 | Pending |
+| TEST-24 | Phase 12 | Pending |
+| QUAL-08 | Phase 12 | Pending |
+| SETTRIE-01 | Phase 13 | Pending |
+| SETTRIE-02 | Phase 13 | Pending |
+| CMS-01 | Phase 13 | Pending |
+| CMS-02 | Phase 13 | Pending |
+| TRUNK-01 | Phase 13 | Pending |
+| TRUNK-02 | Phase 13 | Pending |
+| BUFPOOL-01 | Phase 13 | Pending |
+| BUFPOOL-02 | Phase 13 | Pending |
+| LEARN-01 | Phase 13 | Pending |
+| LEARN-02 | Phase 13 | Pending |
+| TEST-25 | Phase 13 | Pending |
+| TEST-26 | Phase 13 | Pending |
+| TEST-27 | Phase 13 | Pending |
+| TEST-28 | Phase 13 | Pending |
+| TEST-29 | Phase 13 | Pending |
+| TEST-30 | Phase 13 | Pending |
+| TEST-31 | Phase 13 | Pending |
+| BENCH-03 | Phase 13 | Pending |
+| BENCH-04 | Phase 13 | Pending |
+| BENCH-05 | Phase 13 | Pending |
+| BENCH-06 | Phase 13 | Pending |
+| BENCH-07 | Phase 13 | Pending |
+| QUAL-09 | Phase 13 | Pending |
+| QUAL-10 | Phase 13 | Pending |
 
 **Coverage:**
-- v1 requirements: 60 total
-- Mapped to phases: 60
+- v1 requirements: 60 total (all Complete)
+- v2 requirements: 67 total
+- Mapped to phases: 127
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-24*
-*Last updated: 2026-02-24 after roadmap creation*
+*Last updated: 2026-02-25 after v2.0 milestone requirements*
