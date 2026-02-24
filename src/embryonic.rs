@@ -2,7 +2,7 @@
 //!
 //! This module implements autonomous pattern detection from the mutation stream.
 //! Pattern templates define multi-hop patterns to watch for. When edges arrive,
-//! candidates track partial pattern completion using [`bitvec`]. When completion
+//! candidates track partial pattern completion using [`bitvec!`]. When completion
 //! exceeds the template threshold, candidates are promoted to full frames.
 //! Stale candidates are pruned, and a per-template cap prevents unbounded growth.
 //!
@@ -18,10 +18,10 @@
 //! # Edge Matching
 //!
 //! When an edge `(source, target, edge_type)` arrives:
-//! - For [`Direction::Outgoing`] hops, the edge source must match the anchor
+//! - For [`Outgoing`](crate::types::Direction::Outgoing) hops, the edge source must match the anchor
 //!   or the node reached by previous hops.
-//! - For [`Direction::Incoming`] hops, the edge target must match.
-//! - For [`Direction::Any`], either direction matches.
+//! - For [`Incoming`](crate::types::Direction::Incoming) hops, the edge target must match.
+//! - For [`Any`](crate::types::Direction::Any), either direction matches.
 //! - If the hop has an `edge_type` filter, it must match the observed edge type.
 
 use bitvec::prelude::*;

@@ -1,7 +1,7 @@
 //! Global monotonic epoch sequencer.
 //!
 //! Produces strictly increasing [`Epoch`] values with no gaps under
-//! sequential calls. The sequencer uses [`AtomicU64`] with [`SeqCst`]
+//! sequential calls. The sequencer uses [`AtomicU64`] with [`SeqCst`](std::sync::atomic::Ordering::SeqCst)
 //! ordering to guarantee global visibility of epoch assignments across
 //! all threads.
 //!
