@@ -7,6 +7,13 @@
 //! 4. `bench_tier1_check` -- fast binary delta comparison
 //! 5. `bench_embryonic_observe` -- embryonic template observation with candidates
 //! 6. `bench_compaction` -- compaction of frames with mixed assert/retract tuples
+//! 7. `bench_concurrent_ingest` -- concurrent ingest with hardened engine
+//! 8. `bench_set_trie_lookup` -- Set-Trie lookup at 1000-set scale (BENCH-03)
+//! 9. `bench_hashmap_lookup` -- HashMap lookup baseline for BENCH-03 comparison
+//! 10. `bench_scale_ingest` -- enterprise-scale 100K node / 1M edge ingest (BENCH-04)
+//! 11. `bench_scale_frame_query` -- enterprise-scale frame query latency (BENCH-05)
+//! 12. `bench_scale_set_trie_routing` -- Set-Trie routing at enterprise scale (BENCH-06)
+//! 13. `bench_scale_embryonic` -- embryonic observation with 100 templates (BENCH-07)
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use krabnet::*;
@@ -126,6 +133,75 @@ fn setup_engine() -> (engine::Engine, Epoch) {
     });
 
     (eng, last_epoch)
+}
+
+/// Creates an enterprise-scale engine with 100K nodes, 1M edges, and registered frames.
+///
+/// Used by BENCH-04 and BENCH-05. Setup is expensive so benchmarks using this
+/// should use `LargeInput` batch size.
+fn setup_scale_engine() -> (engine::Engine, u64) {
+    let mut eng = Engine::new(2048); // 2048 ring buffer for scale
+
+    // Add 100K nodes with alternating types
+    for i in 1..=100_000u64 {
+        let type_id = match i % 3 {
+            0 => TypeId(30),
+            1 => TypeId(10),
+            _ => TypeId(20),
+        };
+        eng.ingest(Event::NodeAdded {
+            node_id: NodeId(i),
+            type_id,
+        });
+    }
+
+    // Add 1M edges: 100K chain edges + 900K random cross-links
+    let mut edge_counter = 0u64;
+
+    // Chain: 1->2->3->...->100000
+    for i in 1..100_000u64 {
+        eng.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(edge_counter),
+            source: NodeId(i),
+            target: NodeId(i + 1),
+            type_id: TypeId(100),
+        });
+        edge_counter += 1;
+    }
+
+    // Cross-links: ~900K additional edges using modular arithmetic for determinism
+    for i in 0..900_000u64 {
+        let source = (i % 99_999) + 1;
+        let target = ((i * 7 + 13) % 99_999) + 1;
+        if source != target {
+            eng.ingest(Event::EdgeAdded {
+                edge_id: EdgeId(edge_counter),
+                source: NodeId(source),
+                target: NodeId(target),
+                type_id: if i % 3 == 0 {
+                    TypeId(200)
+                } else {
+                    TypeId(100)
+                },
+            });
+            edge_counter += 1;
+        }
+    }
+
+    // Register 50 frames at various anchors
+    let epoch = Epoch(edge_counter + 200);
+    for i in 0..50u64 {
+        let anchor = NodeId(i * 2000 + 1);
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: None,
+            filter: Filter::None,
+        }];
+        eng.register_frame(anchor, pattern, epoch);
+    }
+
+    (eng, edge_counter)
 }
 
 /// Benchmark: ingest an EdgeAdded event through the full engine pipeline.
@@ -404,6 +480,163 @@ fn bench_hashmap_lookup(c: &mut Criterion) {
     });
 }
 
+// === Enterprise-Scale Benchmarks (BENCH-04 through BENCH-07) ===
+
+/// Benchmark: enterprise-scale ingest throughput (BENCH-04).
+///
+/// 100K nodes, 1M edges, 50 registered frames. Measures throughput of
+/// 1000 new EdgeAdded events through the full pipeline.
+fn bench_scale_ingest(c: &mut Criterion) {
+    c.bench_function("scale_ingest", |b| {
+        b.iter_batched(
+            setup_scale_engine,
+            |(mut eng, edge_counter)| {
+                // Measured: Ingest 1000 new EdgeAdded events
+                for i in 0..1000u64 {
+                    eng.ingest(black_box(Event::EdgeAdded {
+                        edge_id: EdgeId(edge_counter + i + 10_000_000),
+                        source: NodeId((i % 99_999) + 1),
+                        target: NodeId(((i * 3 + 7) % 99_999) + 1),
+                        type_id: TypeId(100),
+                    }));
+                }
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
+}
+
+/// Benchmark: enterprise-scale frame query latency (BENCH-05).
+///
+/// 100K nodes, 1M edges, 100 registered frames. Measures latency of
+/// querying each of 100 frames.
+fn bench_scale_frame_query(c: &mut Criterion) {
+    c.bench_function("scale_frame_query", |b| {
+        b.iter_batched(
+            || {
+                let (mut eng, edge_counter) = setup_scale_engine();
+                // Register 50 more frames (total 100)
+                let epoch = Epoch(edge_counter + 500);
+                for i in 50..100u64 {
+                    let anchor = NodeId(i * 1000 + 1);
+                    let pattern = vec![HopSpec {
+                        direction: Direction::Outgoing,
+                        edge_type: Some(TypeId(100)),
+                        target_type: None,
+                        filter: Filter::None,
+                    }];
+                    eng.register_frame(anchor, pattern, epoch);
+                }
+                eng
+            },
+            |mut eng| {
+                // Measured: Query each of the 100 frames
+                for fid in 0..100u64 {
+                    black_box(eng.query_frame(fid));
+                }
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
+}
+
+/// Benchmark: Set-Trie routing at enterprise scale (BENCH-06).
+///
+/// 500 frames with 20 nodes each (10K unique nodes registered).
+/// Measures affected_frames for an EdgeAdded event touching a high-fan-out node.
+fn bench_scale_set_trie_routing(c: &mut Criterion) {
+    // Setup: Build inverted index with 500 frames, 20 nodes each
+    let mut index = InvertedIndex::new();
+    for fid in 0..500u64 {
+        // Each frame covers 20 nodes, with overlap to create high-fan-out nodes
+        let nodes: Vec<NodeId> = (0..20u64).map(|j| NodeId(fid % 200 + j * 50)).collect();
+        index.register_frame(fid, &nodes, &[]);
+    }
+
+    // Event touching a high-fan-out node (NodeId(0) appears in many frames)
+    let event = Event::EdgeAdded {
+        edge_id: EdgeId(0),
+        source: NodeId(0),
+        target: NodeId(50),
+        type_id: TypeId(100),
+    };
+
+    c.bench_function("scale_set_trie_routing", |b| {
+        b.iter(|| {
+            black_box(index.affected_frames(black_box(&event)));
+        });
+    });
+}
+
+/// Benchmark: embryonic observation at enterprise scale (BENCH-07).
+///
+/// 100 templates with 2-hop patterns (distinct edge types per template).
+/// ~50 candidates per template pre-populated (~5000 total candidates).
+/// Measures observe_edge with a new matching edge.
+fn bench_scale_embryonic(c: &mut Criterion) {
+    c.bench_function("scale_embryonic", |b| {
+        b.iter_batched(
+            || {
+                let mut disco = EmbryonicDiscovery::new();
+
+                // Register 100 templates with distinct 2-hop patterns
+                for tid in 0..100u64 {
+                    let edge_type_1 = TypeId(1000 + tid as u32);
+                    let edge_type_2 = TypeId(2000 + tid as u32);
+                    disco.register_template(PatternTemplate {
+                        id: tid,
+                        pattern: vec![
+                            HopSpec {
+                                direction: Direction::Outgoing,
+                                edge_type: Some(edge_type_1),
+                                target_type: None,
+                                filter: Filter::None,
+                            },
+                            HopSpec {
+                                direction: Direction::Outgoing,
+                                edge_type: Some(edge_type_2),
+                                target_type: None,
+                                filter: Filter::None,
+                            },
+                        ],
+                        threshold: 1.0,
+                        max_candidates: 200,
+                        stale_window: 10000,
+                        success_count: 0,
+                        failure_count: 0,
+                        active: true,
+                    });
+                }
+
+                // Pre-populate ~50 candidates per template by observing edges
+                // Each template's first-hop edge type is TypeId(1000 + tid)
+                for tid in 0..100u64 {
+                    for j in 0..50u64 {
+                        disco.observe_edge(
+                            NodeId(tid * 1000 + j),
+                            NodeId(tid * 1000 + j + 500),
+                            TypeId(1000 + tid as u32),
+                            Epoch(tid * 100 + j),
+                        );
+                    }
+                }
+
+                disco
+            },
+            |mut disco| {
+                // Measured: observe_edge with an edge matching template 0's first hop
+                black_box(disco.observe_edge(
+                    black_box(NodeId(999_999)),
+                    black_box(NodeId(999_998)),
+                    black_box(TypeId(1000)), // matches template 0
+                    black_box(Epoch(99_999)),
+                ));
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
+
 criterion_group!(
     benches,
     bench_ingest_event,
@@ -415,5 +648,9 @@ criterion_group!(
     bench_concurrent_ingest,
     bench_set_trie_lookup,
     bench_hashmap_lookup,
+    bench_scale_ingest,
+    bench_scale_frame_query,
+    bench_scale_set_trie_routing,
+    bench_scale_embryonic,
 );
 criterion_main!(benches);

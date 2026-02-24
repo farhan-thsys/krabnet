@@ -182,7 +182,7 @@ pub fn classify_frames(
 
 /// Returns the set of all frame IDs that participate in any trunk.
 ///
-/// These frames should be pinned to [`FrameTier::Hot`] to prevent eviction
+/// These frames should be pinned to [`crate::types::FrameTier::Hot`] to prevent eviction
 /// of structural spines.
 ///
 /// # Examples

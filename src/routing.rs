@@ -7,7 +7,7 @@
 //!
 //! # Design
 //!
-//! The index uses a [`SetTrie`](crate::set_trie::SetTrie) for node-to-frame
+//! The index uses a [`SetTrie`] for node-to-frame
 //! lookups, enabling O(|pattern|) set intersection and containment queries.
 //! Edge key lookups remain HashMap-based since they are individual key lookups.
 //!
