@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-24)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 4: Differential MVCC Engine
+**Current focus:** Phase 5: Frame Materialization
 
 ## Current Position
 
-Phase: 4 of 10 (Differential MVCC Engine)
+Phase: 5 of 10 (Frame Materialization)
 Plan: 1 of 1 in current phase (COMPLETE)
-Status: Phase 4 complete
-Last activity: 2026-02-24 -- Completed 04-01-PLAN.md (differential MVCC collection)
+Status: Phase 5 complete
+Last activity: 2026-02-24 -- Completed 05-01-PLAN.md (frame materialization with DFS)
 
-Progress: [████░░░░░░] 40%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: 5 min
-- Total execution time: 0.35 hours
+- Total execution time: 0.38 hours
 
 **By Phase:**
 
@@ -31,10 +31,11 @@ Progress: [████░░░░░░] 40%
 | 2 - Epoch Sequencer & Ring Buffer | 1 | 3 min | 3 min |
 | 3 - Property Graph Storage | 1 | 3 min | 3 min |
 | 4 - Differential MVCC Engine | 1 | 2 min | 2 min |
+| 5 - Frame Materialization | 1 | 2 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: 13m, 3m, 3m, 2m
-- Trend: stable (fast, accelerating)
+- Last 5 plans: 13m, 3m, 3m, 2m, 2m
+- Trend: stable (fast, consistently under 3 min)
 
 *Updated after each plan completion*
 
@@ -59,6 +60,9 @@ Recent decisions affecting current work:
 - Phase 4: Cached aggregate net_delta maintained incrementally on assert/retract, recalculated from scratch after compaction for exactness
 - Phase 4: Compaction assigns frontier epoch to collapsed tuples for consistent temporal ordering
 - Phase 4: Default trait implemented via delegation to new() for ergonomic construction
+- Phase 5: Tests co-located with implementation in frame.rs following Rust module convention
+- Phase 5: DFS uses recursive approach with path vector accumulation for clarity
+- Phase 5: Frame starts Cold on creation; tier set externally or by eviction
 
 ### Pending Todos
 
@@ -71,5 +75,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-24
-Stopped at: Completed 04-01-PLAN.md (Phase 4 complete, ready for Phase 5)
+Stopped at: Completed 05-01-PLAN.md (Phase 5 complete, ready for Phase 6)
 Resume file: None

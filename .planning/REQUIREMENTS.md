@@ -37,14 +37,14 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Frame System
 
-- [ ] **FRAME-01**: Frame holds a multi-hop pattern (Vec<HopSpec>), anchor node, and DiffCollection of traversal paths
-- [ ] **FRAME-02**: Materialize performs DFS from anchor node following hop pattern, collecting all complete paths as +1 assertions
-- [ ] **FRAME-03**: Materialization filters by edge type, target node type, and property filter at each hop
-- [ ] **FRAME-04**: Apply delta (+1 or -1) to frame state with cached net_delta update
-- [ ] **FRAME-05**: Frame query returns current state (paths with positive net delta), incrementing query_count
-- [ ] **FRAME-06**: Frame snapshot returns historical state at a given epoch
-- [ ] **FRAME-07**: Frame compaction delegates to underlying DiffCollection
-- [ ] **FRAME-08**: Frame eviction clears state and sets tier to Cold; re-materialization restores state
+- [x] **FRAME-01**: Frame holds a multi-hop pattern (Vec<HopSpec>), anchor node, and DiffCollection of traversal paths
+- [x] **FRAME-02**: Materialize performs DFS from anchor node following hop pattern, collecting all complete paths as +1 assertions
+- [x] **FRAME-03**: Materialization filters by edge type, target node type, and property filter at each hop
+- [x] **FRAME-04**: Apply delta (+1 or -1) to frame state with cached net_delta update
+- [x] **FRAME-05**: Frame query returns current state (paths with positive net delta), incrementing query_count
+- [x] **FRAME-06**: Frame snapshot returns historical state at a given epoch
+- [x] **FRAME-07**: Frame compaction delegates to underlying DiffCollection
+- [x] **FRAME-08**: Frame eviction clears state and sets tier to Cold; re-materialization restores state
 
 ### Signal Routing
 
@@ -85,7 +85,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **TEST-01**: Differential tests verify assert/retract math, annihilation, double-assert, snapshots, compaction, negative delta warning
 - [x] **TEST-02**: Ring buffer tests verify push/read, sequential epochs, wraparound, unwritten-returns-none
 - [x] **TEST-03**: Graph store tests verify node/edge CRUD, cascading removal, directional neighbors, edge type filtering
-- [ ] **TEST-04**: Frame tests verify 2-hop materialization, no-path case, multiple paths, delta application, evict/rematerialize
+- [x] **TEST-04**: Frame tests verify 2-hop materialization, no-path case, multiple paths, delta application, evict/rematerialize
 - [ ] **TEST-05**: Inverted index tests verify register/lookup, affected frames, shared node fan-out, unregister
 - [ ] **TEST-06**: Embryonic tests verify template registration, decomposition, candidate creation, progressive completion, auto-promotion, pruning, cap
 - [ ] **TEST-07**: Integration tests verify full pipeline, retraction pipeline, shared-node multi-frame, embryonic auto-promotion, compaction correctness
@@ -157,14 +157,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DIFF-05 | Phase 4 | Complete |
 | DIFF-06 | Phase 4 | Complete |
 | DIFF-07 | Phase 4 | Complete |
-| FRAME-01 | Phase 5 | Pending |
-| FRAME-02 | Phase 5 | Pending |
-| FRAME-03 | Phase 5 | Pending |
-| FRAME-04 | Phase 5 | Pending |
-| FRAME-05 | Phase 5 | Pending |
-| FRAME-06 | Phase 5 | Pending |
-| FRAME-07 | Phase 5 | Pending |
-| FRAME-08 | Phase 5 | Pending |
+| FRAME-01 | Phase 5 | Complete |
+| FRAME-02 | Phase 5 | Complete |
+| FRAME-03 | Phase 5 | Complete |
+| FRAME-04 | Phase 5 | Complete |
+| FRAME-05 | Phase 5 | Complete |
+| FRAME-06 | Phase 5 | Complete |
+| FRAME-07 | Phase 5 | Complete |
+| FRAME-08 | Phase 5 | Complete |
 | ROUTE-01 | Phase 6 | Pending |
 | ROUTE-02 | Phase 6 | Pending |
 | ROUTE-03 | Phase 6 | Pending |
@@ -187,7 +187,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEST-01 | Phase 4 | Complete |
 | TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 3 | Complete |
-| TEST-04 | Phase 5 | Pending |
+| TEST-04 | Phase 5 | Complete |
 | TEST-05 | Phase 6 | Pending |
 | TEST-06 | Phase 8 | Pending |
 | TEST-07 | Phase 9 | Pending |
