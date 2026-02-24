@@ -1,15 +1,17 @@
 //! Top-level engine orchestrator wiring all Krabnet components.
 //!
 //! The [`Engine`] owns a [`RingBuffer`], [`Graph`], [`InvertedIndex`],
-//! [`HashMap`] of [`Frame`]s, [`EmbryonicDiscovery`], and a [`TierConfig`].
+//! [`HashMap`] of [`Frame`]s wrapped in `Arc<RwLock<>>`, an optional
+//! [`CompactionWorker`], [`EmbryonicDiscovery`], and a [`TierConfig`].
 //! It executes the full ingest-update-maintain-interpret pipeline:
 //!
 //! 1. Push event to ring buffer (epoch assignment)
 //! 2. Apply mutation to property graph
-//! 3. Query inverted index for affected frames
-//! 4. For each affected frame, run Tier 1 interpretation check
+//! 3. Query inverted index for affected frames (main thread, EVAL-03)
+//! 4. Fan out frame evaluation to parallel threads via `std::thread::scope` (EVAL-01)
 //! 5. For EdgeAdded events, trigger embryonic observation
 //! 6. Auto-promote candidates that meet threshold to new frames
+//! 7. If compaction worker is active, check thresholds and request compaction
 //!
 //! # Usage
 //!
@@ -41,7 +43,9 @@
 //! ```
 
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
+use crate::compaction::{CompactionStats, CompactionWorker};
 use crate::embryonic::{EmbryonicDiscovery, PatternTemplate};
 use crate::frame::Frame;
 use crate::graph::Graph;
@@ -80,8 +84,14 @@ pub struct EngineStats {
 /// Top-level engine orchestrating all Krabnet components.
 ///
 /// Owns the ring buffer, property graph, inverted index, frame map,
-/// embryonic discovery engine, and tier configuration. Exposes the
-/// full ingest-update-maintain-interpret pipeline through [`ingest`](Engine::ingest).
+/// embryonic discovery engine, optional compaction worker, and tier
+/// configuration. Frames are wrapped in `Arc<RwLock<Frame>>` for
+/// concurrent read/write access during parallel frame evaluation.
+///
+/// Exposes the full ingest-update-maintain-interpret pipeline through
+/// [`ingest`](Engine::ingest). Frame evaluation fans out to parallel
+/// threads via `std::thread::scope` after single-threaded inverted
+/// index lookup (EVAL-01, EVAL-03).
 pub struct Engine {
     /// Ring buffer for event ingestion with epoch assignment.
     ring_buffer: RingBuffer,
@@ -89,8 +99,8 @@ pub struct Engine {
     graph: Graph,
     /// Inverted index for O(affected) event-to-frame routing.
     index: InvertedIndex,
-    /// Registered frames keyed by frame ID.
-    frames: HashMap<u64, Frame>,
+    /// Registered frames keyed by frame ID, wrapped in Arc<RwLock<>> for concurrent access.
+    frames: HashMap<u64, Arc<RwLock<Frame>>>,
     /// Embryonic frame discovery engine.
     embryonic: EmbryonicDiscovery,
     /// Adaptive tiering configuration (used by external callers for scoring).
@@ -102,13 +112,16 @@ pub struct Engine {
     next_frame_id: u64,
     /// Current epoch (updated after each ingest).
     current_epoch: Epoch,
+    /// Optional background compaction worker.
+    compaction_worker: Option<CompactionWorker>,
 }
 
 impl Engine {
     /// Creates a new engine with the given ring buffer capacity.
     ///
     /// Initializes all components to empty/default state. The ring buffer
-    /// capacity must be a power of 2.
+    /// capacity must be a power of 2. No compaction worker is created
+    /// (backward compatible with v1 behavior).
     ///
     /// # Panics
     ///
@@ -124,6 +137,32 @@ impl Engine {
             previous_deltas: HashMap::new(),
             next_frame_id: 0,
             current_epoch: Epoch(0),
+            compaction_worker: None,
+        }
+    }
+
+    /// Creates a new engine with compaction worker enabled.
+    ///
+    /// The compaction worker runs on a dedicated background thread and
+    /// automatically compacts frames whose tuple count exceeds the
+    /// given threshold.
+    ///
+    /// # Arguments
+    ///
+    /// * `ring_buffer_capacity` - Must be a power of 2.
+    /// * `compaction_threshold` - Tuple count threshold for automatic compaction.
+    pub fn with_compaction(ring_buffer_capacity: usize, compaction_threshold: usize) -> Self {
+        Self {
+            ring_buffer: RingBuffer::new(ring_buffer_capacity),
+            graph: Graph::new(),
+            index: InvertedIndex::new(),
+            frames: HashMap::new(),
+            embryonic: EmbryonicDiscovery::new(),
+            tier_config: TierConfig::default(),
+            previous_deltas: HashMap::new(),
+            next_frame_id: 0,
+            current_epoch: Epoch(0),
+            compaction_worker: Some(CompactionWorker::new(compaction_threshold)),
         }
     }
 
@@ -132,11 +171,15 @@ impl Engine {
     /// Pipeline steps:
     /// 1. Push event to ring buffer, receiving an assigned epoch.
     /// 2. Apply the mutation to the property graph.
-    /// 3. Query the inverted index for affected frames.
-    /// 4. For each affected frame, run Tier 1 check (delta comparison).
+    /// 3. Query the inverted index for affected frames (main thread, EVAL-03).
+    /// 4. Fan out affected frame evaluation to parallel threads via
+    ///    `std::thread::scope` (EVAL-01). Each thread acquires a read lock
+    ///    on the frame to check net_delta, then runs Tier 1 check.
     /// 5. For EdgeAdded events, trigger embryonic observation and
     ///    auto-promote any candidates that meet their threshold.
-    /// 6. Update `current_epoch` and return the assigned epoch.
+    /// 6. If compaction worker is active, check each frame's tuple count
+    ///    against threshold and request compaction for those exceeding it.
+    /// 7. Update `current_epoch` and return the assigned epoch.
     pub fn ingest(&mut self, event: Event) -> Epoch {
         // Step 1: Push to ring buffer
         let epoch = self.ring_buffer.push(event.clone());
@@ -169,17 +212,47 @@ impl Engine {
             }
         }
 
-        // Step 3: Query inverted index for affected frames
+        // Step 3: Query inverted index for affected frames (main thread, EVAL-03)
         let affected = self.index.affected_frames(&event);
 
-        // Step 4: For each affected frame, run Tier 1 check
-        for frame_id in &affected {
-            if let Some(frame) = self.frames.get(frame_id) {
-                let previous = self.previous_deltas.get(frame_id).copied().unwrap_or(0);
-                let current = frame.net_delta();
-                let _changed = tier1_check(previous, current);
-                self.previous_deltas.insert(*frame_id, current);
-            }
+        // Step 4: Fan out frame evaluation to parallel threads (EVAL-01)
+        // Collect (frame_id, frame_arc) pairs for affected frames
+        let affected_frames: Vec<(u64, Arc<RwLock<Frame>>)> = affected
+            .iter()
+            .filter_map(|fid| {
+                self.frames.get(fid).map(|arc| (*fid, Arc::clone(arc)))
+            })
+            .collect();
+
+        // Capture previous_deltas reference for use in scoped threads
+        let prev_deltas = &self.previous_deltas;
+
+        // Use std::thread::scope to fan out frame evaluation
+        let delta_updates: Vec<(u64, i64)> = std::thread::scope(|s| {
+            let handles: Vec<_> = affected_frames
+                .iter()
+                .map(|(frame_id, frame_arc)| {
+                    let fid = *frame_id;
+                    let arc = Arc::clone(frame_arc);
+                    s.spawn(move || {
+                        let frame = arc.read().expect("RwLock poisoned");
+                        let previous = prev_deltas.get(&fid).copied().unwrap_or(0);
+                        let current = frame.net_delta();
+                        let _changed = tier1_check(previous, current);
+                        (fid, current)
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("Scoped thread panicked"))
+                .collect()
+        });
+
+        // Merge delta updates back on main thread
+        for (fid, current) in delta_updates {
+            self.previous_deltas.insert(fid, current);
         }
 
         // Step 5: For EdgeAdded events, trigger embryonic observation
@@ -205,11 +278,24 @@ impl Engine {
                 self.index.register_frame(frame_id, &node_ids, &[]);
 
                 self.previous_deltas.insert(frame_id, frame.net_delta());
-                self.frames.insert(frame_id, frame);
+                self.frames.insert(frame_id, Arc::new(RwLock::new(frame)));
             }
         }
 
-        // Step 6: Update current epoch
+        // Step 6: If compaction worker is active, check thresholds
+        if let Some(ref worker) = self.compaction_worker {
+            for frame_arc in self.frames.values() {
+                let tuple_count = {
+                    let frame = frame_arc.read().expect("RwLock poisoned");
+                    frame.tuple_count()
+                };
+                if worker.should_compact(tuple_count) {
+                    worker.request_compaction(Arc::clone(frame_arc), epoch);
+                }
+            }
+        }
+
+        // Step 7: Update current epoch
         self.current_epoch = epoch;
 
         epoch
@@ -219,7 +305,8 @@ impl Engine {
     ///
     /// Creates the frame, materializes it against the current graph state,
     /// extracts node IDs from materialized paths, registers in the inverted
-    /// index, and stores the frame. Returns the assigned frame ID.
+    /// index, wraps in `Arc<RwLock<>>`, and stores the frame. Returns the
+    /// assigned frame ID.
     pub fn register_frame(
         &mut self,
         anchor: NodeId,
@@ -237,7 +324,7 @@ impl Engine {
         self.index.register_frame(frame_id, &node_ids, &[]);
 
         self.previous_deltas.insert(frame_id, frame.net_delta());
-        self.frames.insert(frame_id, frame);
+        self.frames.insert(frame_id, Arc::new(RwLock::new(frame)));
 
         frame_id
     }
@@ -249,41 +336,52 @@ impl Engine {
 
     /// Compacts all frames below the given frontier epoch.
     ///
-    /// Iterates through every frame and calls `compact(frontier)`.
+    /// Iterates through every frame, acquires write lock, and calls `compact(frontier)`.
     pub fn compact_all(&mut self, frontier: Epoch) {
-        for frame in self.frames.values_mut() {
+        for frame_arc in self.frames.values() {
+            let mut frame = frame_arc.write().expect("RwLock poisoned");
             frame.compact(frontier);
         }
     }
 
     /// Queries a frame by ID, returning owned paths.
     ///
-    /// Returns `None` if the frame does not exist. The returned paths
-    /// are cloned from the frame's internal references.
+    /// Acquires write lock (query increments count). Returns `None` if the
+    /// frame does not exist. The returned paths are cloned from the frame's
+    /// internal references.
     pub fn query_frame(&mut self, frame_id: u64) -> Option<Vec<Vec<NodeId>>> {
         self.frames
-            .get_mut(&frame_id)
-            .map(|frame| frame.query().into_iter().cloned().collect())
+            .get(&frame_id)
+            .map(|frame_arc| {
+                let mut frame = frame_arc.write().expect("RwLock poisoned");
+                frame.query().into_iter().cloned().collect()
+            })
     }
 
     /// Returns a temporal snapshot of a frame at the given epoch.
     ///
-    /// Returns `None` if the frame does not exist. The returned paths
-    /// are cloned from the frame's internal references.
+    /// Acquires read lock. Returns `None` if the frame does not exist.
+    /// The returned paths are cloned from the frame's internal references.
     pub fn snapshot_frame(&self, frame_id: u64, epoch: Epoch) -> Option<Vec<Vec<NodeId>>> {
         self.frames
             .get(&frame_id)
-            .map(|frame| frame.snapshot(epoch).into_iter().cloned().collect())
+            .map(|frame_arc| {
+                let frame = frame_arc.read().expect("RwLock poisoned");
+                frame.snapshot(epoch).into_iter().cloned().collect()
+            })
     }
 
     /// Collects aggregate statistics from all engine components.
+    ///
+    /// Acquires read lock on each frame to collect tier and tuple count.
     pub fn stats(&self) -> EngineStats {
         let mut hot_frames = 0usize;
         let mut warm_frames = 0usize;
         let mut cold_frames = 0usize;
         let mut total_tuples = 0usize;
 
-        for frame in self.frames.values() {
+        for frame_arc in self.frames.values() {
+            let frame = frame_arc.read().expect("RwLock poisoned");
             match frame.tier() {
                 FrameTier::Hot => hot_frames += 1,
                 FrameTier::Warm => warm_frames += 1,
@@ -305,10 +403,16 @@ impl Engine {
         }
     }
 
+    /// Returns compaction statistics if the compaction worker is active.
+    pub fn compaction_stats(&self) -> Option<CompactionStats> {
+        self.compaction_worker.as_ref().map(|w| w.stats())
+    }
+
     /// Extracts all unique NodeIds from a frame's current materialized paths.
     ///
     /// Calls `frame.query()` to get current paths, then collects all unique
-    /// NodeIds across all paths.
+    /// NodeIds across all paths. Takes `&mut Frame` directly (not the Arc wrapper)
+    /// for use during frame creation before wrapping.
     fn extract_node_ids_from_frame(frame: &mut Frame) -> Vec<NodeId> {
         let paths = frame.query();
         let mut node_ids: Vec<NodeId> = Vec::new();
@@ -398,12 +502,14 @@ mod tests {
         // Now apply a retraction delta directly to simulate edge removal effect
         // In a full system, edge removal would trigger frame maintenance.
         // Here we manually apply a delta to verify the differential math.
-        let frame = engine.frames.get_mut(&fid).unwrap();
-        frame.apply_delta(
-            vec![NodeId(1), NodeId(2)],
-            Epoch(epoch.0 + 1),
-            Delta(-1),
-        );
+        {
+            let mut frame = engine.frames.get(&fid).unwrap().write().expect("RwLock poisoned");
+            frame.apply_delta(
+                vec![NodeId(1), NodeId(2)],
+                Epoch(epoch.0 + 1),
+                Delta(-1),
+            );
+        }
 
         let paths_after = engine.query_frame(fid).unwrap();
         assert!(
@@ -553,12 +659,14 @@ mod tests {
 
         // Apply retraction at epoch+1
         let retract_epoch = Epoch(epoch.0 + 1);
-        let frame = engine.frames.get_mut(&fid).unwrap();
-        frame.apply_delta(
-            vec![NodeId(1), NodeId(2)],
-            retract_epoch,
-            Delta(-1),
-        );
+        {
+            let mut frame = engine.frames.get(&fid).unwrap().write().expect("RwLock poisoned");
+            frame.apply_delta(
+                vec![NodeId(1), NodeId(2)],
+                retract_epoch,
+                Delta(-1),
+            );
+        }
 
         // Compact at retraction epoch -- assert + retract should annihilate
         engine.compact_all(retract_epoch);
@@ -571,7 +679,7 @@ mod tests {
         );
 
         // Tuple count should be 0 (annihilated)
-        let frame = engine.frames.get(&fid).unwrap();
+        let frame = engine.frames.get(&fid).unwrap().read().expect("RwLock poisoned");
         assert_eq!(
             frame.tuple_count(),
             0,
@@ -619,12 +727,14 @@ mod tests {
         assert_eq!(snap5[0], vec![NodeId(1), NodeId(2)]);
 
         // Add more data at epoch 10
-        let frame = engine.frames.get_mut(&fid).unwrap();
-        frame.apply_delta(
-            vec![NodeId(1), NodeId(3)],
-            Epoch(10),
-            Delta(1),
-        );
+        {
+            let mut frame = engine.frames.get(&fid).unwrap().write().expect("RwLock poisoned");
+            frame.apply_delta(
+                vec![NodeId(1), NodeId(3)],
+                Epoch(10),
+                Delta(1),
+            );
+        }
 
         // Snapshot at epoch 5 should still return only the original path
         let snap5_after = engine.snapshot_frame(fid, materialize_epoch).unwrap();
@@ -830,23 +940,21 @@ mod tests {
 
         // Apply retractions
         let retract_epoch = Epoch(epoch.0 + 1);
-        engine
-            .frames
-            .get_mut(&fid1)
-            .unwrap()
-            .apply_delta(vec![NodeId(1), NodeId(2)], retract_epoch, Delta(-1));
-        engine
-            .frames
-            .get_mut(&fid2)
-            .unwrap()
-            .apply_delta(vec![NodeId(1), NodeId(3)], retract_epoch, Delta(-1));
+        {
+            let mut frame = engine.frames.get(&fid1).unwrap().write().expect("RwLock poisoned");
+            frame.apply_delta(vec![NodeId(1), NodeId(2)], retract_epoch, Delta(-1));
+        }
+        {
+            let mut frame = engine.frames.get(&fid2).unwrap().write().expect("RwLock poisoned");
+            frame.apply_delta(vec![NodeId(1), NodeId(3)], retract_epoch, Delta(-1));
+        }
 
         // Compact all
         engine.compact_all(retract_epoch);
 
         // Both frames should be empty (annihilated)
         for fid in [fid1, fid2] {
-            let frame = engine.frames.get(&fid).unwrap();
+            let frame = engine.frames.get(&fid).unwrap().read().expect("RwLock poisoned");
             assert_eq!(
                 frame.tuple_count(),
                 0,
@@ -875,5 +983,65 @@ mod tests {
         // Verify the property was applied to the graph
         let val = engine.graph.get_property(NodeId(1), 42);
         assert_eq!(val, Some(&crate::types::PropertyValue::Integer(100)));
+    }
+
+    // ── with_compaction_constructor ────────────────────────────────────
+
+    #[test]
+    fn with_compaction_creates_worker() {
+        let engine = Engine::with_compaction(64, 10_000);
+        assert!(engine.compaction_stats().is_some());
+    }
+
+    // ── new_has_no_compaction_worker ───────────────────────────────────
+
+    #[test]
+    fn new_has_no_compaction_worker() {
+        let engine = Engine::new(64);
+        assert!(engine.compaction_stats().is_none());
+    }
+
+    // ── parallel_frame_evaluation ──────────────────────────────────────
+
+    #[test]
+    fn parallel_frame_evaluation_produces_correct_results() {
+        let mut engine = Engine::new(64);
+
+        // Build: node 1 -> node 2, node 1 -> node 3, node 1 -> node 4
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(4), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(3), type_id: TypeId(100),
+        });
+        let epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(2), source: NodeId(1), target: NodeId(4), type_id: TypeId(100),
+        });
+
+        // Register multiple frames anchored at different nodes
+        let fid1 = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            epoch,
+        );
+
+        // Verify initial state
+        let paths = engine.query_frame(fid1).unwrap();
+        assert_eq!(paths.len(), 3, "Frame should see 3 paths from node 1");
+
+        // Trigger parallel evaluation by ingesting event on shared node
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(1),
+            key: 0,
+            value: crate::types::PropertyValue::Integer(42),
+        });
+
+        // Frame should still be valid after parallel evaluation
+        let paths_after = engine.query_frame(fid1).unwrap();
+        assert_eq!(paths_after.len(), 3, "Frame should still see 3 paths after parallel eval");
     }
 }
