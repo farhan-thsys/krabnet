@@ -9,8 +9,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Core Infrastructure
 
-- [ ] **INFRA-01**: System defines core types (PropertyValue, PropertySet, Direction, Filter, HopSpec, Event, DiffTuple, InterpretationTier, FrameTier) shared across all modules
-- [ ] **INFRA-02**: String interner maps bidirectionally between String and u32 for property keys and type names at initialization
+- [x] **INFRA-01**: System defines core types (PropertyValue, PropertySet, Direction, Filter, HopSpec, Event, DiffTuple, InterpretationTier, FrameTier) shared across all modules
+- [x] **INFRA-02**: String interner maps bidirectionally between String and u32 for property keys and type names at initialization
 - [ ] **INFRA-03**: Global monotonic epoch sequencer produces strictly increasing u64 epochs via AtomicU64 with SeqCst ordering
 - [ ] **INFRA-04**: Lock-free ring buffer with pre-allocated power-of-2 slots accepts events and returns assigned epochs
 - [ ] **INFRA-05**: Ring buffer correctly handles slot claiming, epoch assignment, and read-after-write with correct atomic ordering
@@ -138,8 +138,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 1 | Pending |
-| INFRA-02 | Phase 1 | Pending |
+| INFRA-01 | Phase 1 | Complete |
+| INFRA-02 | Phase 1 | Complete |
 | INFRA-03 | Phase 2 | Pending |
 | INFRA-04 | Phase 2 | Pending |
 | INFRA-05 | Phase 2 | Pending |
