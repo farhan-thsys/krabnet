@@ -74,11 +74,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Engine Orchestration
 
-- [ ] **ENGINE-01**: Ingest pipeline: push to ring buffer → apply to graph → query inverted index → maintain affected frames → run Tier 1 check
-- [ ] **ENGINE-02**: EdgeAdded events trigger embryonic observe_edge; promotions auto-create new parked frames
-- [ ] **ENGINE-03**: Frame registration materializes against current graph and registers in inverted index
-- [ ] **ENGINE-04**: Compact all frames below a given frontier epoch
-- [ ] **ENGINE-05**: Stats reporting returns node/edge/frame counts, tier distribution, tuple count, embryonic stats
+- [x] **ENGINE-01**: Ingest pipeline: push to ring buffer → apply to graph → query inverted index → maintain affected frames → run Tier 1 check
+- [x] **ENGINE-02**: EdgeAdded events trigger embryonic observe_edge; promotions auto-create new parked frames
+- [x] **ENGINE-03**: Frame registration materializes against current graph and registers in inverted index
+- [x] **ENGINE-04**: Compact all frames below a given frontier epoch
+- [x] **ENGINE-05**: Stats reporting returns node/edge/frame counts, tier distribution, tuple count, embryonic stats
 
 ### Testing
 
@@ -88,8 +88,8 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **TEST-04**: Frame tests verify 2-hop materialization, no-path case, multiple paths, delta application, evict/rematerialize
 - [x] **TEST-05**: Inverted index tests verify register/lookup, affected frames, shared node fan-out, unregister
 - [x] **TEST-06**: Embryonic tests verify template registration, decomposition, candidate creation, progressive completion, auto-promotion, pruning, cap
-- [ ] **TEST-07**: Integration tests verify full pipeline, retraction pipeline, shared-node multi-frame, embryonic auto-promotion, compaction correctness
-- [ ] **TEST-08**: Snapshot tests verify temporal consistency across frames at specific epochs
+- [x] **TEST-07**: Integration tests verify full pipeline, retraction pipeline, shared-node multi-frame, embryonic auto-promotion, compaction correctness
+- [x] **TEST-08**: Snapshot tests verify temporal consistency across frames at specific epochs
 
 ### Benchmarks
 
@@ -179,19 +179,19 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EMBRYO-04 | Phase 8 | Complete |
 | EMBRYO-05 | Phase 8 | Complete |
 | EMBRYO-06 | Phase 8 | Complete |
-| ENGINE-01 | Phase 9 | Pending |
-| ENGINE-02 | Phase 9 | Pending |
-| ENGINE-03 | Phase 9 | Pending |
-| ENGINE-04 | Phase 9 | Pending |
-| ENGINE-05 | Phase 9 | Pending |
+| ENGINE-01 | Phase 9 | Complete |
+| ENGINE-02 | Phase 9 | Complete |
+| ENGINE-03 | Phase 9 | Complete |
+| ENGINE-04 | Phase 9 | Complete |
+| ENGINE-05 | Phase 9 | Complete |
 | TEST-01 | Phase 4 | Complete |
 | TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 3 | Complete |
 | TEST-04 | Phase 5 | Complete |
 | TEST-05 | Phase 6 | Complete |
 | TEST-06 | Phase 8 | Complete |
-| TEST-07 | Phase 9 | Pending |
-| TEST-08 | Phase 9 | Pending |
+| TEST-07 | Phase 9 | Complete |
+| TEST-08 | Phase 9 | Complete |
 | BENCH-01 | Phase 10 | Pending |
 | QUAL-01 | Phase 10 | Pending |
 | QUAL-02 | Phase 10 | Pending |

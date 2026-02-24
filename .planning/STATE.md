@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-24)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 8: Embryonic Frame Discovery
+**Current focus:** Phase 9: Engine Orchestration
 
 ## Current Position
 
-Phase: 8 of 10 (Embryonic Frame Discovery)
+Phase: 9 of 10 (Engine Orchestration)
 Plan: 1 of 1 in current phase (COMPLETE)
-Status: Phase 8 complete
-Last activity: 2026-02-24 -- Completed 08-01-PLAN.md (embryonic frame discovery with bitvec completion tracking)
+Status: Phase 9 complete
+Last activity: 2026-02-24 -- Completed 09-01-PLAN.md (engine orchestration wiring all components)
 
-Progress: [████████░░] 80%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
+- Total plans completed: 9
 - Average duration: 4 min
-- Total execution time: 0.50 hours
+- Total execution time: 0.55 hours
 
 **By Phase:**
 
@@ -35,10 +35,11 @@ Progress: [████████░░] 80%
 | 6 - Signal Routing | 1 | 2 min | 2 min |
 | 7 - Interpretation & Adaptive Tiering | 1 | 2 min | 2 min |
 | 8 - Embryonic Frame Discovery | 1 | 3 min | 3 min |
+| 9 - Engine Orchestration | 1 | 3 min | 3 min |
 
 **Recent Trend:**
-- Last 5 plans: 2m, 2m, 2m, 2m, 3m
-- Trend: stable (fast, consistently under 3 min)
+- Last 5 plans: 2m, 2m, 2m, 3m, 3m
+- Trend: stable (fast, consistently under 4 min)
 
 *Updated after each plan completion*
 
@@ -75,6 +76,10 @@ Recent decisions affecting current work:
 - Phase 8: Direction matching simplified for embryonic discovery -- full path tracking deferred to engine orchestration
 - Phase 8: decompose_frame generates sub-patterns shortest-to-longest for consistent ordering
 - Phase 8: Tests co-located with implementation in embryonic.rs following Rust module convention
+- Phase 9: Frame.tuple_count() accessor added for engine stats aggregation
+- Phase 9: Index registration uses NodeIds from materialized paths only (no edge keys for simplicity)
+- Phase 9: Auto-promoted embryonic frames immediately materialized and registered in inverted index
+- Phase 9: Tests co-located with implementation in engine.rs following Rust module convention
 
 ### Pending Todos
 
@@ -87,5 +92,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-24
-Stopped at: Completed 08-01-PLAN.md (Phase 8 complete, ready for Phase 9)
+Stopped at: Completed 09-01-PLAN.md (Phase 9 complete, ready for Phase 10)
 Resume file: None
