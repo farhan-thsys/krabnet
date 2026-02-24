@@ -29,6 +29,7 @@
 //! - [`set_trie`] -- Set-Trie for O(|pattern|) set containment/intersection queries
 //! - [`count_min_sketch`] -- Count-Min Sketch for probabilistic frequency counting
 //! - [`wal`] -- Write-ahead log for crash recovery with binary event persistence
+//! - [`trunk`] -- Trunk/leaf detection for identifying structural spines shared across frames
 
 pub mod coalescer;
 pub mod compaction;
@@ -49,6 +50,7 @@ pub mod sequencer;
 pub mod set_trie;
 pub mod tier3;
 pub mod tiering;
+pub mod trunk;
 pub mod types;
 pub mod wal;
 
@@ -70,5 +72,6 @@ pub use routing::InvertedIndex;
 pub use sequencer::EpochSequencer;
 pub use set_trie::SetTrie;
 pub use tier3::{LlmClient, MockLlmClient, Tier3Worker};
+pub use trunk::{TrunkInfo, detect_trunks};
 pub use types::*;
 pub use wal::{WalReader, WalWriter};
