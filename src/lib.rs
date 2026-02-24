@@ -20,8 +20,10 @@
 //! - [`interpret`] -- Two-tier signal interpretation (binary + structural)
 //! - [`tiering`] -- Adaptive frame priority scoring and tier recommendation
 //! - [`embryonic`] -- Embryonic frame discovery with bitvec completion tracking
+//! - [`coalescer`] -- Mutation coalescing with epoch-window deduplication
 //! - [`engine`] -- Top-level orchestrator wiring all components into a single pipeline
 
+pub mod coalescer;
 pub mod diff;
 pub mod embryonic;
 pub mod engine;
@@ -36,6 +38,7 @@ pub mod tiering;
 pub mod types;
 
 // Re-export core types for ergonomic use: `use krabnet::*`
+pub use coalescer::MutationCoalescer;
 pub use diff::DiffCollection;
 pub use embryonic::EmbryonicDiscovery;
 pub use engine::Engine;

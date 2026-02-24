@@ -302,6 +302,25 @@ impl Frame {
     pub fn tuple_count(&self) -> usize {
         self.state.tuple_count()
     }
+
+    /// Returns a clone of the frame's internal DiffCollection.
+    ///
+    /// Called by the compaction worker while holding a read lock, before
+    /// releasing the lock to compact off-lock (step 1 of double-buffering).
+    pub fn clone_diff_collection(&self) -> DiffCollection<Vec<NodeId>> {
+        self.state.clone()
+    }
+
+    /// Replaces the frame's internal DiffCollection with the provided compacted one.
+    ///
+    /// Called by the compaction worker while holding a write lock, completing
+    /// the atomic swap step of the double-buffer pattern (COMPACT-02). The write
+    /// lock is held only for this swap, not during the actual compaction work.
+    /// Updates the cached `net_delta` after the swap.
+    pub fn swap_diff_collection(&mut self, compacted: DiffCollection<Vec<NodeId>>) {
+        self.state = compacted;
+        self.net_delta = self.state.aggregate_net_delta();
+    }
 }
 
 #[cfg(test)]
