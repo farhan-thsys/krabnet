@@ -138,13 +138,72 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (populated during roadmap creation) | | |
+| INFRA-01 | Phase 1 | Pending |
+| INFRA-02 | Phase 1 | Pending |
+| INFRA-03 | Phase 2 | Pending |
+| INFRA-04 | Phase 2 | Pending |
+| INFRA-05 | Phase 2 | Pending |
+| INFRA-06 | Phase 2 | Pending |
+| GRAPH-01 | Phase 3 | Pending |
+| GRAPH-02 | Phase 3 | Pending |
+| GRAPH-03 | Phase 3 | Pending |
+| GRAPH-04 | Phase 3 | Pending |
+| GRAPH-05 | Phase 3 | Pending |
+| GRAPH-06 | Phase 3 | Pending |
+| DIFF-01 | Phase 4 | Pending |
+| DIFF-02 | Phase 4 | Pending |
+| DIFF-03 | Phase 4 | Pending |
+| DIFF-04 | Phase 4 | Pending |
+| DIFF-05 | Phase 4 | Pending |
+| DIFF-06 | Phase 4 | Pending |
+| DIFF-07 | Phase 4 | Pending |
+| FRAME-01 | Phase 5 | Pending |
+| FRAME-02 | Phase 5 | Pending |
+| FRAME-03 | Phase 5 | Pending |
+| FRAME-04 | Phase 5 | Pending |
+| FRAME-05 | Phase 5 | Pending |
+| FRAME-06 | Phase 5 | Pending |
+| FRAME-07 | Phase 5 | Pending |
+| FRAME-08 | Phase 5 | Pending |
+| ROUTE-01 | Phase 6 | Pending |
+| ROUTE-02 | Phase 6 | Pending |
+| ROUTE-03 | Phase 6 | Pending |
+| ROUTE-04 | Phase 6 | Pending |
+| INTERP-01 | Phase 7 | Pending |
+| INTERP-02 | Phase 7 | Pending |
+| TIER-01 | Phase 7 | Pending |
+| TIER-02 | Phase 7 | Pending |
+| EMBRYO-01 | Phase 8 | Pending |
+| EMBRYO-02 | Phase 8 | Pending |
+| EMBRYO-03 | Phase 8 | Pending |
+| EMBRYO-04 | Phase 8 | Pending |
+| EMBRYO-05 | Phase 8 | Pending |
+| EMBRYO-06 | Phase 8 | Pending |
+| ENGINE-01 | Phase 9 | Pending |
+| ENGINE-02 | Phase 9 | Pending |
+| ENGINE-03 | Phase 9 | Pending |
+| ENGINE-04 | Phase 9 | Pending |
+| ENGINE-05 | Phase 9 | Pending |
+| TEST-01 | Phase 4 | Pending |
+| TEST-02 | Phase 2 | Pending |
+| TEST-03 | Phase 3 | Pending |
+| TEST-04 | Phase 5 | Pending |
+| TEST-05 | Phase 6 | Pending |
+| TEST-06 | Phase 8 | Pending |
+| TEST-07 | Phase 9 | Pending |
+| TEST-08 | Phase 9 | Pending |
+| BENCH-01 | Phase 10 | Pending |
+| QUAL-01 | Phase 10 | Pending |
+| QUAL-02 | Phase 10 | Pending |
+| QUAL-03 | Phase 10 | Pending |
+| QUAL-04 | Phase 10 | Pending |
+| QUAL-05 | Phase 10 | Pending |
 
 **Coverage:**
-- v1 requirements: 42 total
-- Mapped to phases: 0
-- Unmapped: 42
+- v1 requirements: 60 total
+- Mapped to phases: 60
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-24*
-*Last updated: 2026-02-24 after initial definition*
+*Last updated: 2026-02-24 after roadmap creation*
