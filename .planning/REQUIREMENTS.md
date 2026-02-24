@@ -68,20 +68,20 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### Mutation Coalescing
 
-- [ ] **COALESCE-01**: MutationCoalescer accumulates events within configurable epoch window (default: 16 epochs)
-- [ ] **COALESCE-02**: Same-node mutations within window collapse into single downstream trigger
-- [ ] **COALESCE-03**: CoalescedBatch output contains deduplicated (node_id, latest_event, epoch_range) tuples
+- [x] **COALESCE-01**: MutationCoalescer accumulates events within configurable epoch window (default: 16 epochs)
+- [x] **COALESCE-02**: Same-node mutations within window collapse into single downstream trigger
+- [x] **COALESCE-03**: CoalescedBatch output contains deduplicated (node_id, latest_event, epoch_range) tuples
 
 ### Fan-Out Limits
 
-- [ ] **FANOUT-01**: Configurable MAX_FANOUT (default: 1000) limits immediate frame evaluations per event
-- [ ] **FANOUT-02**: When affected_frames exceeds MAX_FANOUT, top frames by priority_score evaluated immediately, remainder queued in DeferredEvalQueue
+- [x] **FANOUT-01**: Configurable MAX_FANOUT (default: 1000) limits immediate frame evaluations per event
+- [x] **FANOUT-02**: When affected_frames exceeds MAX_FANOUT, top frames by priority_score evaluated immediately, remainder queued in DeferredEvalQueue
 
 ### Frame Prioritizer Hysteresis
 
-- [ ] **HYST-01**: Consecutive threshold counters track consecutive windows above/below hot/cold thresholds
-- [ ] **HYST-02**: Frame must score below cold_threshold for N consecutive windows (default: 5) before eviction to Cold
-- [ ] **HYST-03**: Frame must score above hot_threshold for N consecutive windows before promotion to Hot
+- [x] **HYST-01**: Consecutive threshold counters track consecutive windows above/below hot/cold thresholds
+- [x] **HYST-02**: Frame must score below cold_threshold for N consecutive windows (default: 5) before eviction to Cold
+- [x] **HYST-03**: Frame must score above hot_threshold for N consecutive windows before promotion to Hot
 
 ### gRPC Server
 
@@ -280,14 +280,14 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | EVAL-01 | Phase 11 | Pending |
 | EVAL-02 | Phase 11 | Pending |
 | EVAL-03 | Phase 11 | Pending |
-| COALESCE-01 | Phase 11 | Pending |
-| COALESCE-02 | Phase 11 | Pending |
-| COALESCE-03 | Phase 11 | Pending |
-| FANOUT-01 | Phase 11 | Pending |
-| FANOUT-02 | Phase 11 | Pending |
-| HYST-01 | Phase 11 | Pending |
-| HYST-02 | Phase 11 | Pending |
-| HYST-03 | Phase 11 | Pending |
+| COALESCE-01 | Phase 11 | Complete |
+| COALESCE-02 | Phase 11 | Complete |
+| COALESCE-03 | Phase 11 | Complete |
+| FANOUT-01 | Phase 11 | Complete |
+| FANOUT-02 | Phase 11 | Complete |
+| HYST-01 | Phase 11 | Complete |
+| HYST-02 | Phase 11 | Complete |
+| HYST-03 | Phase 11 | Complete |
 | TEST-09 | Phase 11 | Pending |
 | TEST-10 | Phase 11 | Pending |
 | TEST-11 | Phase 11 | Pending |

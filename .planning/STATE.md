@@ -11,18 +11,18 @@ See: .planning/PROJECT.md (updated 2026-02-25)
 ## Current Position
 
 Phase: 11 of 13 (Harden the Engine)
-Plan: 0/3 — plans not yet created
-Status: Milestone v2.0 initialized — ready to plan Phase 11
-Last activity: 2026-02-25 — Milestone v2.0 requirements and roadmap defined
+Plan: 2/3 — executing phase 11
+Status: Completed 11-02 (coalescing, fan-out limits, hysteresis)
+Last activity: 2026-02-25 — Completed plan 11-02
 
 Progress: [██████████░░░] 77% (10/13 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 10
+- Total plans completed: 11
 - Average duration: 4 min
-- Total execution time: 0.62 hours
+- Total execution time: 0.74 hours
 
 **By Phase:**
 
@@ -38,12 +38,15 @@ Progress: [██████████░░░] 77% (10/13 phases)
 | 8 - Embryonic Frame Discovery | 1 | 3 min | 3 min |
 | 9 - Engine Orchestration | 1 | 3 min | 3 min |
 | 10 - Benchmarks & Quality | 1 | 4 min | 4 min |
+| 11 - Harden the Engine (02) | 1 | 7 min | 7 min |
 
 **Recent Trend:**
-- Last 5 plans: 2m, 2m, 3m, 3m, 4m
-- Trend: stable (consistently under 5 min)
+- Last 5 plans: 2m, 3m, 3m, 4m, 7m
+- Trend: stable
 
 *Updated after each plan completion*
+| Phase 11 P01 | 8min | 2 tasks | 4 files |
+| Phase 11 P02 | 7min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -85,6 +88,12 @@ Recent decisions affecting current work:
 - Phase 10: Dropped html_reports from criterion (windows-sys needs dlltool missing from GNU toolchain)
 - Phase 10: iter_batched with SmallInput for stateful benchmarks to isolate setup cost
 - Phase 10: All 4 quality gates passing: 109 tests, 35 doc-tests, 0 clippy warnings, 0 doc warnings
+- Phase 11-02: MutationCoalescer uses HashMap<NodeId, CoalescedEntry> for O(1) upsert within window
+- Phase 11-02: DeferredEvalQueue uses sorted Vec with binary_search_by for O(log n) insertion
+- Phase 11-02: HysteresisState returns Warm on neutral-zone scores, resetting both counters
+- Phase 11-02: event_node_id returns source NodeId for edge events
+- [Phase 11]: Used std::sync::{RwLock, Mutex} instead of parking_lot -- GNU toolchain dlltool incompatibility on Windows
+- [Phase 11]: Scoped threads via std::thread::scope for frame evaluation -- zero overhead, automatic lifetime management
 
 ### Pending Todos
 
@@ -97,5 +106,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-25
-Stopped at: Milestone v2.0 initialized — ready for /gsd:plan-phase 11
+Stopped at: Completed 11-02-PLAN.md
 Resume file: None
