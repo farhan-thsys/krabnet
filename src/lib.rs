@@ -30,7 +30,9 @@
 //! - [`count_min_sketch`] -- Count-Min Sketch for probabilistic frequency counting
 //! - [`wal`] -- Write-ahead log for crash recovery with binary event persistence
 //! - [`trunk`] -- Trunk/leaf detection for identifying structural spines shared across frames
+//! - [`buffer_pool`] -- Custom buffer pool with graph-aware eviction ordering
 
+pub mod buffer_pool;
 pub mod coalescer;
 pub mod compaction;
 pub mod count_min_sketch;
@@ -55,6 +57,7 @@ pub mod types;
 pub mod wal;
 
 // Re-export core types for ergonomic use: `use krabnet::*`
+pub use buffer_pool::{BufferPool, PageHandle};
 pub use coalescer::MutationCoalescer;
 pub use compaction::CompactionWorker;
 pub use count_min_sketch::CountMinSketch;
