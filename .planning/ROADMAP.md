@@ -68,13 +68,13 @@ Plans:
   6. krabnet-server binary compiles and starts (gRPC + compaction + Tier 3 + WAL)
   7. krabnet-mcp binary compiles and starts (MCP stdio server)
   8. All Phase 1-11 tests still pass; cargo clippy zero warnings
-**Plans**: TBD
+**Plans**: 4 plans (3 waves)
 
 Plans:
-- [ ] 12-01-PLAN.md — Protobuf schema + gRPC server implementation
-- [ ] 12-02-PLAN.md — MCP JSON-RPC server + binary entry point
-- [ ] 12-03-PLAN.md — Tier 3 LLM integration + graph-aware prompt serialization
-- [ ] 12-04-PLAN.md — Write-ahead log + embryonic auto-decomposition + server binary
+- [ ] 12-01-PLAN.md — Phase 12 deps + Protobuf schema + gRPC server with 8 RPCs (Wave 1)
+- [ ] 12-02-PLAN.md — MCP JSON-RPC server + krabnet-mcp binary (Wave 2)
+- [ ] 12-03-PLAN.md — Tier 3 LLM worker + prompt serialization + bounded channel (Wave 2)
+- [ ] 12-04-PLAN.md — WAL persistence + embryonic auto-decomposition + krabnet-server binary + quality (Wave 3)
 
 ### Phase 13: Scale and Optimize
 **Goal**: Replace PoC data structures with production-grade alternatives. Hit enterprise performance targets.
