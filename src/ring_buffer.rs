@@ -210,4 +210,180 @@ impl RingBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{NodeId, TypeId};
+
+    /// Helper to create a simple NodeAdded event.
+    fn node_added(id: u64) -> Event {
+        Event::NodeAdded {
+            node_id: NodeId(id),
+            type_id: TypeId(0),
+        }
+    }
+
+    #[test]
+    fn push_returns_sequential_epochs() {
+        let mut rb = RingBuffer::new(8);
+        for i in 0..5 {
+            let epoch = rb.push(node_added(i));
+            assert_eq!(epoch, Epoch(i));
+        }
+    }
+
+    #[test]
+    fn get_returns_pushed_event() {
+        let mut rb = RingBuffer::new(4);
+        let event = Event::NodeAdded {
+            node_id: NodeId(42),
+            type_id: TypeId(7),
+        };
+        let epoch = rb.push(event.clone());
+        let retrieved = rb.get(epoch);
+        assert_eq!(retrieved, Some(&event));
+    }
+
+    #[test]
+    fn get_unwritten_returns_none() {
+        let rb = RingBuffer::new(4);
+        assert_eq!(rb.get(Epoch(0)), None);
+        assert_eq!(rb.get(Epoch(100)), None);
+        assert_eq!(rb.get(Epoch(u64::MAX)), None);
+    }
+
+    #[test]
+    fn wraparound_overwrites_oldest() {
+        let capacity = 4;
+        let mut rb = RingBuffer::new(capacity);
+
+        // Fill the buffer: epochs 0, 1, 2, 3
+        for i in 0..capacity as u64 {
+            rb.push(node_added(i));
+        }
+
+        // All should be readable
+        for i in 0..capacity as u64 {
+            assert!(
+                rb.get(Epoch(i)).is_some(),
+                "epoch {} should be readable before wraparound",
+                i
+            );
+        }
+
+        // Push one more (epoch 4), which overwrites slot 0 (epoch 0)
+        let epoch4 = rb.push(node_added(100));
+        assert_eq!(epoch4, Epoch(4));
+
+        // Epoch 0 is now overwritten -- should return None
+        assert_eq!(
+            rb.get(Epoch(0)),
+            None,
+            "epoch 0 should be overwritten after wraparound"
+        );
+
+        // Epoch 4 should be readable
+        assert_eq!(
+            rb.get(Epoch(4)),
+            Some(&node_added(100)),
+            "epoch 4 should be readable"
+        );
+
+        // Epochs 1, 2, 3 should still be readable
+        for i in 1..capacity as u64 {
+            assert!(
+                rb.get(Epoch(i)).is_some(),
+                "epoch {} should still be readable",
+                i
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "power of 2")]
+    fn capacity_must_be_power_of_two() {
+        RingBuffer::new(3);
+    }
+
+    #[test]
+    #[should_panic(expected = "power of 2")]
+    fn capacity_zero_panics() {
+        RingBuffer::new(0);
+    }
+
+    #[test]
+    fn len_tracks_events() {
+        let mut rb = RingBuffer::new(4);
+        assert_eq!(rb.len(), 0);
+        assert!(rb.is_empty());
+
+        rb.push(node_added(1));
+        assert_eq!(rb.len(), 1);
+        assert!(!rb.is_empty());
+
+        rb.push(node_added(2));
+        assert_eq!(rb.len(), 2);
+
+        rb.push(node_added(3));
+        rb.push(node_added(4));
+        assert_eq!(rb.len(), 4); // at capacity
+
+        // After wraparound, len stays at capacity
+        rb.push(node_added(5));
+        assert_eq!(rb.len(), 4);
+        rb.push(node_added(6));
+        assert_eq!(rb.len(), 4);
+    }
+
+    #[test]
+    fn capacity_returns_initial_value() {
+        let rb = RingBuffer::new(16);
+        assert_eq!(rb.capacity(), 16);
+        let rb2 = RingBuffer::new(1024);
+        assert_eq!(rb2.capacity(), 1024);
+    }
+
+    #[test]
+    fn ring_buffer_is_send_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<RingBuffer>();
+        assert_sync::<RingBuffer>();
+    }
+
+    #[test]
+    fn multiple_wraparounds() {
+        let mut rb = RingBuffer::new(2);
+        // Push 10 events into a buffer of size 2
+        for i in 0..10u64 {
+            let epoch = rb.push(node_added(i));
+            assert_eq!(epoch, Epoch(i));
+        }
+        // Only the last 2 should be readable
+        assert_eq!(rb.get(Epoch(8)), Some(&node_added(8)));
+        assert_eq!(rb.get(Epoch(9)), Some(&node_added(9)));
+        // Earlier epochs should all be overwritten
+        for i in 0..8u64 {
+            assert_eq!(rb.get(Epoch(i)), None, "epoch {} should be overwritten", i);
+        }
+    }
+
+    #[test]
+    fn different_event_types_stored_correctly() {
+        let mut rb = RingBuffer::new(4);
+
+        let e0 = rb.push(Event::NodeAdded {
+            node_id: NodeId(1),
+            type_id: TypeId(0),
+        });
+        let e1 = rb.push(Event::NodeRemoved {
+            node_id: NodeId(1),
+        });
+        let e2 = rb.push(Event::PropertyChanged {
+            node_id: NodeId(1),
+            key: 42,
+            value: crate::types::PropertyValue::Integer(100),
+        });
+
+        assert!(matches!(rb.get(e0), Some(Event::NodeAdded { .. })));
+        assert!(matches!(rb.get(e1), Some(Event::NodeRemoved { .. })));
+        assert!(matches!(rb.get(e2), Some(Event::PropertyChanged { .. })));
+    }
 }

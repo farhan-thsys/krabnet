@@ -125,4 +125,57 @@ impl Default for EpochSequencer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn starts_at_zero() {
+        let seq = EpochSequencer::new();
+        assert_eq!(seq.next(), Epoch(0));
+    }
+
+    #[test]
+    fn sequential_epochs_are_increasing() {
+        let seq = EpochSequencer::new();
+        let mut prev = seq.next();
+        for _ in 1..100 {
+            let curr = seq.next();
+            assert!(curr.0 == prev.0 + 1, "expected {}, got {}", prev.0 + 1, curr.0);
+            prev = curr;
+        }
+    }
+
+    #[test]
+    fn current_does_not_increment() {
+        let seq = EpochSequencer::new();
+        let c1 = seq.current();
+        let c2 = seq.current();
+        let c3 = seq.current();
+        assert_eq!(c1, c2);
+        assert_eq!(c2, c3);
+        assert_eq!(c1, Epoch(0));
+    }
+
+    #[test]
+    fn current_reflects_next_calls() {
+        let seq = EpochSequencer::new();
+        assert_eq!(seq.current(), Epoch(0));
+        seq.next();
+        assert_eq!(seq.current(), Epoch(1));
+        seq.next();
+        seq.next();
+        assert_eq!(seq.current(), Epoch(3));
+    }
+
+    #[test]
+    fn default_starts_at_zero() {
+        let seq = EpochSequencer::default();
+        assert_eq!(seq.next(), Epoch(0));
+    }
+
+    #[test]
+    fn sequencer_is_send_and_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<EpochSequencer>();
+        assert_sync::<EpochSequencer>();
+    }
 }
