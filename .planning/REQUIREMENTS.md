@@ -130,13 +130,13 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### Trunk/Leaf Detection
 
-- [ ] **TRUNK-01**: detect_trunks() identifies sub-paths shared across >= min_shared_count frames
-- [ ] **TRUNK-02**: Trunk frames pinned to Hot tier (cannot be evicted); leaf frames are eviction candidates
+- [x] **TRUNK-01**: detect_trunks() identifies sub-paths shared across >= min_shared_count frames
+- [x] **TRUNK-02**: Trunk frames pinned to Hot tier (cannot be evicted); leaf frames are eviction candidates
 
 ### Custom Buffer Pool
 
-- [ ] **BUFPOOL-01**: Pre-allocated contiguous buffer (default: 256 MB) divided into fixed-size pages (default: 4 KB) with alloc/free/read/write
-- [ ] **BUFPOOL-02**: Graph-aware eviction: Cold frame pages evicted first, then Warm, never Hot
+- [x] **BUFPOOL-01**: Pre-allocated contiguous buffer (default: 256 MB) divided into fixed-size pages (default: 4 KB) with alloc/free/read/write
+- [x] **BUFPOOL-02**: Graph-aware eviction: Cold frame pages evicted first, then Warm, never Hot
 
 ### Learned Template Weighting
 
@@ -164,9 +164,9 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 - [x] **TEST-25**: test_set_trie_correctness — 1000 sets, containment and intersection queries correct
 - [x] **TEST-26**: test_set_trie_memory_vs_hashmap — memory comparison for 10K frames
 - [x] **TEST-27**: test_count_min_sketch_accuracy — 10K keys, estimates within expected error bounds
-- [ ] **TEST-28**: test_trunk_detection — 50 frames, 30 share first 2 hops, detected as trunk, pinned
-- [ ] **TEST-29**: test_buffer_pool_alloc_free — allocate all, free half, reallocate, no corruption
-- [ ] **TEST-30**: test_buffer_pool_eviction_order — Cold evicted before Warm before Hot
+- [x] **TEST-28**: test_trunk_detection — 50 frames, 30 share first 2 hops, detected as trunk, pinned
+- [x] **TEST-29**: test_buffer_pool_alloc_free — allocate all, free half, reallocate, no corruption
+- [x] **TEST-30**: test_buffer_pool_eviction_order — Cold evicted before Warm before Hot
 - [ ] **TEST-31**: test_learned_weighting — successful template ranks higher than failed template
 
 ### v2 Benchmarks
@@ -329,18 +329,18 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | SETTRIE-02 | Phase 13 | Complete |
 | CMS-01 | Phase 13 | Complete |
 | CMS-02 | Phase 13 | Complete |
-| TRUNK-01 | Phase 13 | Pending |
-| TRUNK-02 | Phase 13 | Pending |
-| BUFPOOL-01 | Phase 13 | Pending |
-| BUFPOOL-02 | Phase 13 | Pending |
+| TRUNK-01 | Phase 13 | Complete |
+| TRUNK-02 | Phase 13 | Complete |
+| BUFPOOL-01 | Phase 13 | Complete |
+| BUFPOOL-02 | Phase 13 | Complete |
 | LEARN-01 | Phase 13 | Pending |
 | LEARN-02 | Phase 13 | Pending |
 | TEST-25 | Phase 13 | Complete |
 | TEST-26 | Phase 13 | Complete |
 | TEST-27 | Phase 13 | Complete |
-| TEST-28 | Phase 13 | Pending |
-| TEST-29 | Phase 13 | Pending |
-| TEST-30 | Phase 13 | Pending |
+| TEST-28 | Phase 13 | Complete |
+| TEST-29 | Phase 13 | Complete |
+| TEST-30 | Phase 13 | Complete |
 | TEST-31 | Phase 13 | Pending |
 | BENCH-03 | Phase 13 | Complete |
 | BENCH-04 | Phase 13 | Pending |

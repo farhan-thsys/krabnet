@@ -11,11 +11,11 @@ See: .planning/PROJECT.md (updated 2026-02-25)
 ## Current Position
 
 Phase: 13 of 13 (Scale and Optimize)
-Plan: 1/3 — completed 13-01
-Status: Completed 13-01 (Set-Trie + Count-Min Sketch + InvertedIndex + FrameActivityTracker)
-Last activity: 2026-02-25 — Completed plan 13-01
+Plan: 2/3 — completed 13-02
+Status: Completed 13-02 (Trunk Detection + Buffer Pool + Engine CMS/Trunk/BufferPool Integration)
+Last activity: 2026-02-25 — Completed plan 13-02
 
-Progress: [████████████░] 95% (13-01 of 13 phases)
+Progress: [█████████████] 97% (13-02 of 13 phases)
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [████████████░] 95% (13-01 of 13 phases)
 | Phase 12 P02 | 6min | 2 tasks | 4 files |
 | Phase 12 P04 | 6min | 2 tasks | 6 files |
 | Phase 13 P01 | 9min | 2 tasks | 6 files |
+| Phase 13 P02 | 10min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -126,6 +127,10 @@ Recent decisions affecting current work:
 - [Phase 13-01]: SetTrie stores per-frame node sets, query_intersecting with single element replaces HashMap posting list lookup
 - [Phase 13-01]: InvertedIndex keeps frame_nodes HashMap for unregister path reconstruction
 - [Phase 13-01]: FrameActivityTracker delegates to free-function priority_score() with CMS-estimated counts
+- [Phase 13-02]: String-based canonical keying for HopSpec sub-paths (f64 in Filter prevents Hash derive)
+- [Phase 13-02]: Trunk detection runs after every register_frame to keep pinned_hot current
+- [Phase 13-02]: Buffer pool auto-relief: evict 5% pages when <10% free
+- [Phase 13-02]: CMS-estimated counts replace per-frame counters in all priority_score calls
 - [Phase 13-01]: TEST-27 uses larger CMS (16384x8) for 10K-key accuracy validation (default 1024x4 too small)
 
 ### Pending Todos
@@ -139,5 +144,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-25
-Stopped at: Completed 13-01-PLAN.md
+Stopped at: Completed 13-02-PLAN.md
 Resume file: None
