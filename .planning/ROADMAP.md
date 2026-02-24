@@ -13,7 +13,7 @@ Krabnet is built bottom-up following the strict compilation DAG: core types and 
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Core Types and String Interning** - Shared type definitions and bidirectional string-to-u32 interner used by every module (completed 2026-02-24)
-- [ ] **Phase 2: Epoch Sequencer and Ring Buffer** - Lock-free ingestion pipeline with monotonic epoch assignment and pre-allocated event buffer
+- [x] **Phase 2: Epoch Sequencer and Ring Buffer** - Lock-free ingestion pipeline with monotonic epoch assignment and pre-allocated event buffer (completed 2026-02-24)
 - [ ] **Phase 3: Property Graph Storage** - In-memory adjacency-on-node property graph with typed nodes, edges, and directional neighbor queries
 - [ ] **Phase 4: Differential MVCC Engine** - Mathematically exact +1/-1 multiset collection with compaction, temporal snapshots, and net delta computation
 - [ ] **Phase 5: Frame Materialization** - Parked traversers with multi-hop DFS materialization, delta application, eviction, and re-materialization
@@ -191,7 +191,7 @@ Note: Phases 2, 3, and 4 all depend only on Phase 1. Phases 6, 7, and 8 all depe
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Core Types and String Interning | 0/TBD | Complete    | 2026-02-24 |
-| 2. Epoch Sequencer and Ring Buffer | 0/TBD | Not started | - |
+| 2. Epoch Sequencer and Ring Buffer | 1/1 | Complete   | 2026-02-24 |
 | 3. Property Graph Storage | 0/TBD | Not started | - |
 | 4. Differential MVCC Engine | 0/TBD | Not started | - |
 | 5. Frame Materialization | 0/TBD | Not started | - |

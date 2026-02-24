@@ -11,10 +11,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [x] **INFRA-01**: System defines core types (PropertyValue, PropertySet, Direction, Filter, HopSpec, Event, DiffTuple, InterpretationTier, FrameTier) shared across all modules
 - [x] **INFRA-02**: String interner maps bidirectionally between String and u32 for property keys and type names at initialization
-- [ ] **INFRA-03**: Global monotonic epoch sequencer produces strictly increasing u64 epochs via AtomicU64 with SeqCst ordering
-- [ ] **INFRA-04**: Lock-free ring buffer with pre-allocated power-of-2 slots accepts events and returns assigned epochs
-- [ ] **INFRA-05**: Ring buffer correctly handles slot claiming, epoch assignment, and read-after-write with correct atomic ordering
-- [ ] **INFRA-06**: Ring buffer implements Send and Sync with documented safety invariants
+- [x] **INFRA-03**: Global monotonic epoch sequencer produces strictly increasing u64 epochs via AtomicU64 with SeqCst ordering
+- [x] **INFRA-04**: Lock-free ring buffer with pre-allocated power-of-2 slots accepts events and returns assigned epochs
+- [x] **INFRA-05**: Ring buffer correctly handles slot claiming, epoch assignment, and read-after-write with correct atomic ordering
+- [x] **INFRA-06**: Ring buffer implements Send and Sync with documented safety invariants
 
 ### Graph Storage
 
@@ -83,7 +83,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Testing
 
 - [ ] **TEST-01**: Differential tests verify assert/retract math, annihilation, double-assert, snapshots, compaction, negative delta warning
-- [ ] **TEST-02**: Ring buffer tests verify push/read, sequential epochs, wraparound, unwritten-returns-none
+- [x] **TEST-02**: Ring buffer tests verify push/read, sequential epochs, wraparound, unwritten-returns-none
 - [ ] **TEST-03**: Graph store tests verify node/edge CRUD, cascading removal, directional neighbors, edge type filtering
 - [ ] **TEST-04**: Frame tests verify 2-hop materialization, no-path case, multiple paths, delta application, evict/rematerialize
 - [ ] **TEST-05**: Inverted index tests verify register/lookup, affected frames, shared node fan-out, unregister
@@ -140,10 +140,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | INFRA-01 | Phase 1 | Complete |
 | INFRA-02 | Phase 1 | Complete |
-| INFRA-03 | Phase 2 | Pending |
-| INFRA-04 | Phase 2 | Pending |
-| INFRA-05 | Phase 2 | Pending |
-| INFRA-06 | Phase 2 | Pending |
+| INFRA-03 | Phase 2 | Complete |
+| INFRA-04 | Phase 2 | Complete |
+| INFRA-05 | Phase 2 | Complete |
+| INFRA-06 | Phase 2 | Complete |
 | GRAPH-01 | Phase 3 | Pending |
 | GRAPH-02 | Phase 3 | Pending |
 | GRAPH-03 | Phase 3 | Pending |
@@ -185,7 +185,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ENGINE-04 | Phase 9 | Pending |
 | ENGINE-05 | Phase 9 | Pending |
 | TEST-01 | Phase 4 | Pending |
-| TEST-02 | Phase 2 | Pending |
+| TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 3 | Pending |
 | TEST-04 | Phase 5 | Pending |
 | TEST-05 | Phase 6 | Pending |
