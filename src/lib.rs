@@ -30,6 +30,7 @@
 
 pub mod coalescer;
 pub mod compaction;
+pub mod count_min_sketch;
 pub mod diff;
 pub mod embryonic;
 pub mod engine;
@@ -43,6 +44,7 @@ pub mod interner;
 pub mod ring_buffer;
 pub mod routing;
 pub mod sequencer;
+pub mod set_trie;
 pub mod tier3;
 pub mod tiering;
 pub mod types;
@@ -51,6 +53,7 @@ pub mod wal;
 // Re-export core types for ergonomic use: `use krabnet::*`
 pub use coalescer::MutationCoalescer;
 pub use compaction::CompactionWorker;
+pub use count_min_sketch::CountMinSketch;
 pub use diff::DiffCollection;
 pub use fanout::FanOutLimiter;
 pub use embryonic::EmbryonicDiscovery;
@@ -63,6 +66,7 @@ pub use interner::Interner;
 pub use ring_buffer::RingBuffer;
 pub use routing::InvertedIndex;
 pub use sequencer::EpochSequencer;
+pub use set_trie::SetTrie;
 pub use tier3::{LlmClient, MockLlmClient, Tier3Worker};
 pub use types::*;
 pub use wal::{WalReader, WalWriter};
