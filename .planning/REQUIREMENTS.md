@@ -145,15 +145,15 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### v2 Testing
 
-- [ ] **TEST-09**: test_background_compaction — 50K events, verify auto-compaction fires, tuple count decreases, queries correct
-- [ ] **TEST-10**: test_concurrent_frame_eval — 100 frames, 10K events, correct state with and without thread parallelism
-- [ ] **TEST-11**: test_coalescing_deduplicates — 100 mutations to same node, only 1 downstream eval triggered
-- [ ] **TEST-12**: test_coalescing_preserves_different_nodes — mutations to 10 nodes, all 10 trigger evaluation
-- [ ] **TEST-13**: test_fanout_limit — 2000 frames on same node, only MAX_FANOUT evaluated immediately
-- [ ] **TEST-14**: test_hysteresis_prevents_thrashing — oscillating score stays in Warm
-- [ ] **TEST-15**: test_sustained_throughput — 10K nodes, 100K edges, 200 frames, 500K events, >50K events/sec, stable memory
-- [ ] **TEST-16**: test_compaction_under_load — stress test with compaction enabled
-- [ ] **TEST-17**: test_concurrent_read_write — reader + writer threads for 5 seconds, no panics
+- [x] **TEST-09**: test_background_compaction — 50K events, verify auto-compaction fires, tuple count decreases, queries correct
+- [x] **TEST-10**: test_concurrent_frame_eval — 100 frames, 10K events, correct state with and without thread parallelism
+- [x] **TEST-11**: test_coalescing_deduplicates — 100 mutations to same node, only 1 downstream eval triggered
+- [x] **TEST-12**: test_coalescing_preserves_different_nodes — mutations to 10 nodes, all 10 trigger evaluation
+- [x] **TEST-13**: test_fanout_limit — 2000 frames on same node, only MAX_FANOUT evaluated immediately
+- [x] **TEST-14**: test_hysteresis_prevents_thrashing — oscillating score stays in Warm
+- [x] **TEST-15**: test_sustained_throughput — 10K nodes, 100K edges, 200 frames, 500K events, >50K events/sec, stable memory
+- [x] **TEST-16**: test_compaction_under_load — stress test with compaction enabled
+- [x] **TEST-17**: test_concurrent_read_write — reader + writer threads for 5 seconds, no panics
 - [ ] **TEST-18**: test_grpc_ingest_and_query — gRPC client ingest + query roundtrip
 - [ ] **TEST-19**: test_mcp_tools_list — spawn MCP binary, verify 5 tools returned
 - [ ] **TEST-20**: test_tier3_with_mock_llm — Tier 2 results through channel, mock LLM called, result stored
@@ -171,7 +171,7 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### v2 Benchmarks
 
-- [ ] **BENCH-02**: bench_concurrent_ingest — throughput with 4 evaluator threads
+- [x] **BENCH-02**: bench_concurrent_ingest — throughput with 4 evaluator threads
 - [ ] **BENCH-03**: bench_set_trie_lookup vs bench_hashmap_lookup — latency comparison
 - [ ] **BENCH-04**: bench_scale_ingest — 100K nodes, 1M edges, throughput measurement
 - [ ] **BENCH-05**: bench_scale_frame_query — query latency with large DiffCollections
@@ -180,8 +180,8 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### v2 Quality
 
-- [ ] **QUAL-06**: All Phase 1-10 tests still pass after each phase
-- [ ] **QUAL-07**: cargo clippy zero warnings at every phase gate
+- [x] **QUAL-06**: All Phase 1-10 tests still pass after each phase
+- [x] **QUAL-07**: cargo clippy zero warnings at every phase gate
 - [ ] **QUAL-08**: krabnet-server and krabnet-mcp binaries compile and start
 - [ ] **QUAL-09**: cargo doc --no-deps generates clean documentation
 - [ ] **QUAL-10**: README.md updated with full architecture
@@ -288,18 +288,18 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | HYST-01 | Phase 11 | Complete |
 | HYST-02 | Phase 11 | Complete |
 | HYST-03 | Phase 11 | Complete |
-| TEST-09 | Phase 11 | Pending |
-| TEST-10 | Phase 11 | Pending |
-| TEST-11 | Phase 11 | Pending |
-| TEST-12 | Phase 11 | Pending |
-| TEST-13 | Phase 11 | Pending |
-| TEST-14 | Phase 11 | Pending |
-| TEST-15 | Phase 11 | Pending |
-| TEST-16 | Phase 11 | Pending |
-| TEST-17 | Phase 11 | Pending |
-| BENCH-02 | Phase 11 | Pending |
-| QUAL-06 | Phase 11 | Pending |
-| QUAL-07 | Phase 11 | Pending |
+| TEST-09 | Phase 11 | Complete |
+| TEST-10 | Phase 11 | Complete |
+| TEST-11 | Phase 11 | Complete |
+| TEST-12 | Phase 11 | Complete |
+| TEST-13 | Phase 11 | Complete |
+| TEST-14 | Phase 11 | Complete |
+| TEST-15 | Phase 11 | Complete |
+| TEST-16 | Phase 11 | Complete |
+| TEST-17 | Phase 11 | Complete |
+| BENCH-02 | Phase 11 | Complete |
+| QUAL-06 | Phase 11 | Complete |
+| QUAL-07 | Phase 11 | Complete |
 | GRPC-01 | Phase 12 | Pending |
 | GRPC-02 | Phase 12 | Pending |
 | GRPC-03 | Phase 12 | Pending |

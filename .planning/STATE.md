@@ -10,19 +10,19 @@ See: .planning/PROJECT.md (updated 2026-02-25)
 
 ## Current Position
 
-Phase: 11 of 13 (Harden the Engine)
-Plan: 2/3 — executing phase 11
-Status: Completed 11-02 (coalescing, fan-out limits, hysteresis)
-Last activity: 2026-02-25 — Completed plan 11-02
+Phase: 11 of 13 (Harden the Engine) -- COMPLETE
+Plan: 3/3 — phase 11 complete
+Status: Completed 11-03 (stress tests, quality gates, benchmark)
+Last activity: 2026-02-25 — Completed plan 11-03
 
-Progress: [██████████░░░] 77% (10/13 phases)
+Progress: [███████████░░] 85% (11/13 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 11
+- Total plans completed: 12
 - Average duration: 4 min
-- Total execution time: 0.74 hours
+- Total execution time: 0.91 hours
 
 **By Phase:**
 
@@ -38,15 +38,17 @@ Progress: [██████████░░░] 77% (10/13 phases)
 | 8 - Embryonic Frame Discovery | 1 | 3 min | 3 min |
 | 9 - Engine Orchestration | 1 | 3 min | 3 min |
 | 10 - Benchmarks & Quality | 1 | 4 min | 4 min |
-| 11 - Harden the Engine (02) | 1 | 7 min | 7 min |
+| 11 - Harden the Engine | 3 | 25 min | 8 min |
 
 **Recent Trend:**
-- Last 5 plans: 2m, 3m, 3m, 4m, 7m
+- Last 5 plans: 3m, 3m, 4m, 7m, 10m
 - Trend: stable
 
 *Updated after each plan completion*
 | Phase 11 P01 | 8min | 2 tasks | 4 files |
 | Phase 11 P02 | 7min | 2 tasks | 4 files |
+| Phase 11 P03 | 10min | 2 tasks | 5 files |
+| Phase 11 P03 | 10min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -96,6 +98,12 @@ Recent decisions affecting current work:
 - [Phase 11]: Scoped threads via std::thread::scope for frame evaluation -- zero overhead, automatic lifetime management
 - [Phase 11]: Engine::new() backward compatible (no compaction); Engine::with_compaction() for opt-in background compaction
 - [Phase 11]: Delta updates from scoped threads collected as (frame_id, delta) pairs and merged on main thread
+- [Phase 11-03]: Engine::with_config() as unified constructor accepting optional compaction, coalescing, and fanout parameters
+- [Phase 11-03]: Coalescer gate in ingest(): events accumulated within window, evaluation deferred until flush/window-elapse
+- [Phase 11-03]: Fanout gate in ingest(): scored affected frames split into immediate (top N) and deferred sets
+- [Phase 11-03]: Hysteresis updated per-frame after evaluation, tier changes applied only when consecutive threshold met
+- [Phase 11-03]: affected_frames_by_node() added to InvertedIndex for coalescer batch integration path
+- [Phase 11]: Engine::with_config() as unified constructor for all hardening features
 
 ### Pending Todos
 
@@ -108,5 +116,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-25
-Stopped at: Completed 11-02-PLAN.md
+Stopped at: Completed 11-03-PLAN.md (Phase 11 complete)
 Resume file: None

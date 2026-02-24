@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 ### Milestone v2.0 (Current)
 
-- [ ] **Phase 11: Harden the Engine** - Background compaction, multi-threaded frame eval, mutation coalescing, fan-out limits, hysteresis, stress tests
+- [x] **Phase 11: Harden the Engine** - Background compaction, multi-threaded frame eval, mutation coalescing, fan-out limits, hysteresis, stress tests (completed 2026-02-24)
 - [ ] **Phase 12: Production Interface** - gRPC server (8 RPCs), MCP server (5 tools), Tier 3 LLM, WAL persistence, binary entry points
 - [ ] **Phase 13: Scale and Optimize** - Set-Trie inverted index, Count-Min Sketch, trunk/leaf detection, buffer pool, learned template weighting, enterprise benchmarks
 
@@ -114,6 +114,6 @@ v2.0: 11 → 12 → 13
 | 8. Embryonic Frame Discovery | 1/1 | Complete | 2026-02-24 |
 | 9. Engine Orchestration | 1/1 | Complete | 2026-02-24 |
 | 10. Benchmarks and Quality | 1/1 | Complete | 2026-02-24 |
-| 11. Harden the Engine | 2/3 | In Progress|  |
+| 11. Harden the Engine | 3/3 | Complete   | 2026-02-24 |
 | 12. Production Interface | 0/4 | Not started | - |
 | 13. Scale and Optimize | 0/3 | Not started | - |
