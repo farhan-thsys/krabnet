@@ -26,6 +26,7 @@
 //! - [`grpc`] -- gRPC server with 8 RPC methods wrapping the engine
 //! - [`mcp`] -- MCP JSON-RPC 2.0 server with 5 tools over stdio
 //! - [`tier3`] -- Tier 3 LLM integration with bounded channel and mock client
+//! - [`wal`] -- Write-ahead log for crash recovery with binary event persistence
 
 pub mod coalescer;
 pub mod compaction;
@@ -45,6 +46,7 @@ pub mod sequencer;
 pub mod tier3;
 pub mod tiering;
 pub mod types;
+pub mod wal;
 
 // Re-export core types for ergonomic use: `use krabnet::*`
 pub use coalescer::MutationCoalescer;
@@ -63,3 +65,4 @@ pub use routing::InvertedIndex;
 pub use sequencer::EpochSequencer;
 pub use tier3::{LlmClient, MockLlmClient, Tier3Worker};
 pub use types::*;
+pub use wal::{WalReader, WalWriter};

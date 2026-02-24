@@ -452,7 +452,9 @@ impl Engine {
         let frame_id = self.next_frame_id;
         self.next_frame_id += 1;
 
-        let mut frame = Frame::new(frame_id, anchor, pattern);
+        // Clone pattern before passing to Frame::new (which takes ownership)
+        // so we can use it for embryonic auto-decomposition below.
+        let mut frame = Frame::new(frame_id, anchor, pattern.clone());
         frame.materialize(&self.graph, epoch);
 
         // Extract all unique NodeIds from materialized paths
@@ -461,6 +463,24 @@ impl Engine {
 
         self.previous_deltas.insert(frame_id, frame.net_delta());
         self.frames.insert(frame_id, Arc::new(RwLock::new(frame)));
+
+        // EMBRYO-07: Auto-decompose pattern into sub-patterns and register as embryonic templates.
+        // For a 3-hop pattern, decompose_frame generates all contiguous sub-patterns of
+        // length >= 2 (e.g., [A,B], [B,C], [A,B,C]). Each is registered as a template
+        // so the embryonic discovery engine can detect partial pattern matches.
+        let sub_patterns = EmbryonicDiscovery::decompose_frame(&pattern);
+        for (i, sub_pattern) in sub_patterns.into_iter().enumerate() {
+            // Derive unique template IDs from frame_id to avoid collisions
+            let template_id = (frame_id << 16) | (i as u64);
+            let template = PatternTemplate {
+                id: template_id,
+                pattern: sub_pattern,
+                threshold: 0.8,
+                max_candidates: 100,
+                stale_window: 1000,
+            };
+            self.embryonic.register_template(template);
+        }
 
         frame_id
     }
@@ -1883,5 +1903,81 @@ mod tests {
         let stats = eng.stats();
         assert_eq!(stats.node_count, 100, "Node count should be stable");
         assert_eq!(stats.frame_count, 10, "Frame count should be stable");
+    }
+
+    /// TEST-24: Auto-decomposition on register_frame (EMBRYO-07).
+    ///
+    /// Registers a 3-hop frame and verifies that embryonic templates are
+    /// automatically created from the decomposed sub-patterns. A 3-hop
+    /// pattern [A,B,C] decomposes to [[A,B], [B,C], [A,B,C]] = 3 sub-patterns.
+    #[test]
+    fn test_auto_decomposition_on_register() {
+        let mut engine = Engine::new(64);
+
+        // Start with no embryonic templates
+        assert_eq!(engine.stats().embryonic_templates, 0);
+
+        // Add a node as anchor
+        engine.ingest(Event::NodeAdded {
+            node_id: NodeId(1),
+            type_id: TypeId(10),
+        });
+
+        // Register a 3-hop frame
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: None,
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Incoming,
+                edge_type: Some(TypeId(200)),
+                target_type: None,
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Any,
+                edge_type: Some(TypeId(300)),
+                target_type: None,
+                filter: Filter::None,
+            },
+        ];
+
+        let _frame_id = engine.register_frame(NodeId(1), pattern, Epoch(1));
+
+        // 3-hop pattern decomposes to: [A,B], [B,C], [A,B,C] = 3 sub-patterns
+        let stats = engine.stats();
+        assert_eq!(
+            stats.embryonic_templates, 3,
+            "3-hop pattern should produce 3 embryonic templates via auto-decomposition"
+        );
+
+        // Register another frame with 2-hop pattern
+        let pattern2 = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(400)),
+                target_type: None,
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(500)),
+                target_type: None,
+                filter: Filter::None,
+            },
+        ];
+
+        let _frame_id2 = engine.register_frame(NodeId(1), pattern2, Epoch(2));
+
+        // 2-hop pattern decomposes to: [A,B] = 1 sub-pattern
+        // Total: 3 + 1 = 4 templates
+        let stats2 = engine.stats();
+        assert_eq!(
+            stats2.embryonic_templates, 4,
+            "should accumulate templates from both frame registrations"
+        );
     }
 }
