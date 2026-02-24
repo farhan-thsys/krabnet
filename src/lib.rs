@@ -24,6 +24,7 @@
 //! - [`engine`] -- Top-level orchestrator wiring all components into a single pipeline
 
 pub mod coalescer;
+pub mod compaction;
 pub mod diff;
 pub mod embryonic;
 pub mod engine;
@@ -39,6 +40,7 @@ pub mod types;
 
 // Re-export core types for ergonomic use: `use krabnet::*`
 pub use coalescer::MutationCoalescer;
+pub use compaction::CompactionWorker;
 pub use diff::DiffCollection;
 pub use embryonic::EmbryonicDiscovery;
 pub use engine::Engine;
