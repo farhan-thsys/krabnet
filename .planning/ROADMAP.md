@@ -70,7 +70,9 @@ Plans:
   1. After any graph mutation routed to a frame, the frame's differential state matches what a fresh full DFS materialization would produce
   2. A correctness oracle test harness exists that compares incremental frame state against full re-traverse after every update and asserts exact match
   3. Frame maintenance runs on every ingest event that routes to at least one frame (not just at registration time)
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 17-01-PLAN.md — Wire frame rematerialize into ingest pipeline + correctness oracle test harness
 
 ### Phase 18: Incremental Edge Addition
 **Goal**: EdgeAdded events produce path deltas via targeted per-hop extension instead of full DFS re-traverse
@@ -138,7 +140,7 @@ Plans:
 | 14. Wire Post-Ingest Pipeline | v2.0 | 1/1 | Complete | 2026-02-26 |
 | 15. Harden MCP Binary | v2.0 | 1/1 | Complete | 2026-02-26 |
 | 16. Tech Debt Closure | 1/1 | Complete    | 2026-02-26 | - |
-| 17. Re-Diff Baseline | v3.0 | 0/? | Not started | - |
+| 17. Re-Diff Baseline | v3.0 | 0/1 | Planned | - |
 | 18. Incremental Edge Addition | v3.0 | 0/? | Not started | - |
 | 19. Incremental Edge and Node Removal | v3.0 | 0/? | Not started | - |
 | 20. Incremental Property Change | v3.0 | 0/? | Not started | - |
