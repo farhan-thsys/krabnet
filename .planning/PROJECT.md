@@ -8,12 +8,22 @@ Krabnet is a streaming graph runtime with differential MVCC that pre-materialize
 
 When a signal arrives, decision-relevant context is already materialized — zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
 
+## Current Milestone: v3.0 Tech Debt Closure + Incremental Path Extension
+
+**Goal:** Close all v2.0 tech debt (4 items already built) and replace full re-traverse frame maintenance with incremental path extension for O(affected) updates instead of O(full-DFS).
+
+**Target features:**
+- AnthropicClient real LLM integration (built)
+- CompactionStats in gRPC/MCP stats (built)
+- WAL persistence for MCP binary (built)
+- Incremental path extension replacing full DFS re-traverse on frame maintenance
+
 ## Current State
 
 **Shipped:** v1.0 (core engine, 10 phases) + v2.0 (hardening + production interfaces, 5 phases)
 **Codebase:** ~13,400 LOC Rust across 13 source modules, 2 binary entry points
-**Tests:** 180 lib tests, 53 doc-tests, 13 Criterion benchmarks, zero clippy warnings
-**Binaries:** krabnet-server (gRPC + WAL + Tier 3 LLM), krabnet-mcp (MCP stdio)
+**Tests:** 180 lib tests, 54 doc-tests, 13 Criterion benchmarks, zero clippy warnings
+**Binaries:** krabnet-server (gRPC + WAL + Tier 3 LLM), krabnet-mcp (MCP stdio + WAL)
 
 ## Requirements
 
@@ -50,7 +60,11 @@ When a signal arrives, decision-relevant context is already materialized — zer
 
 ### Active
 
-(None — next milestone not yet defined)
+- [ ] AnthropicClient implementing LlmClient trait with ureq HTTP — v3.0
+- [ ] krabnet-server auto-detects ANTHROPIC_API_KEY for real Tier 3 — v3.0
+- [ ] CompactionStats exposed via gRPC GetStats and MCP krabnet_stats — v3.0
+- [ ] WAL persistence for MCP binary with crash recovery replay — v3.0
+- [ ] Incremental path extension for frame maintenance (replace full DFS re-traverse) — v3.0
 
 ### Out of Scope
 
@@ -74,10 +88,7 @@ Shipped v2.0 with 13,400 LOC Rust. The engine is production-ready with hardened 
 - **Enterprise data structures:** Set-Trie inverted index, Count-Min Sketch scoring, trunk detection, custom buffer pool.
 
 **Tech debt carried forward:**
-- CompactionStats not exposed via GetStats gRPC proto
-- WAL not available in MCP path
-- AnthropicClient not implemented (MockLlmClient placeholder)
-- krabnet-server uses MockLlmClient in production binary
+- (All v2.0 tech debt addressed in v3.0 — code built, pending commit)
 
 ## Constraints
 
@@ -85,7 +96,7 @@ Shipped v2.0 with 13,400 LOC Rust. The engine is production-ready with hardened 
 - **Hot path allocation**: Zero heap allocation after initialization. All Vecs, buffers, index structures pre-allocated at startup
 - **Concurrency**: Lock-free on ingestion path. No Mutex/RwLock on hot path. parking_lot Mutex allowed on background threads only
 - **Identifiers**: All integers — u64 for node/edge IDs, u32 for type IDs and property keys. Zero String on hot path
-- **Dependencies v2.0**: crossbeam 0.8, parking_lot 0.12 (background only), bitvec 1.0, tonic 0.12, prost 0.13, tokio 1 (full), serde 1 (derive), serde_json 1, criterion 0.5 (dev)
+- **Dependencies v3.0**: crossbeam 0.8, parking_lot 0.12 (background only), bitvec 1.0, tonic 0.12, prost 0.13, tokio 1 (full), serde 1 (derive), serde_json 1, ureq 2 (Anthropic HTTP), criterion 0.5 (dev)
 - **Build order**: Strict sequential — Phase 11 → 12 → 13, each must compile and pass ALL tests before next
 
 ## Key Decisions
@@ -95,11 +106,13 @@ Shipped v2.0 with 13,400 LOC Rust. The engine is production-ready with hardened 
 | Adjacency stored on Node struct | Read locality over write cost | ✓ Good — enables fast DFS and Set-Trie lookups |
 | Single-producer ring buffer | Ship PoC fast, future-proof concurrency | ✓ Good — sufficient for v1.0/v2.0 |
 | Background compaction via dedicated thread | Avoid async complexity, crossbeam channel | ✓ Good — clean separation, no hot-path blocking |
-| Re-traverse for frame maintenance | Correctness over performance for PoC | ⚠ Revisit — incremental path extension deferred to v3 |
+| Re-traverse for frame maintenance | Correctness over performance for PoC | ⚠ Revisit — incremental path extension targeted for v3.0 |
 | bitvec for embryonic completion tracking | Efficient per-hop completion bits | ✓ Good — extended with learned weighting in v2.0 |
 | protox+tonic-build (no protoc) | Eliminate external build dependency | ✓ Good — clean build on any system |
-| MockLlmClient as production placeholder | Ship Tier 3 pipeline without real LLM | ⚠ Revisit — needs AnthropicClient for real use |
+| MockLlmClient as production placeholder | Ship Tier 3 pipeline without real LLM | ✓ Good — AnthropicClient built in v3.0 |
 | Engine::with_config() unified constructor | Single entry point for all hardening features | ✓ Good — used by both binaries and benchmarks |
 
+| ureq for Anthropic HTTP (sync, no native-tls conflicts) | Avoid windows-sys/dlltool issues on GNU toolchain | — Pending |
+
 ---
-*Last updated: 2026-02-26 after v2.0 milestone*
+*Last updated: 2026-02-26 after v3.0 milestone start*

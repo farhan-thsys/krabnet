@@ -5,14 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-02-26)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Planning next milestone
-**Milestone:** v2.0 shipped 2026-02-26 (15 phases, 22 plans, 127 requirements)
+**Current focus:** Defining requirements
+**Milestone:** v3.0 — Tech Debt Closure + Incremental Path Extension
 
 ## Current Position
 
-Milestone v2.0 complete. All 15 phases shipped.
-Status: Between milestones — ready for /gsd:new-milestone
-Last activity: 2026-02-26 — Milestone v2.0 archived
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-02-26 — Milestone v3.0 started
 
 ## Performance Metrics
 
