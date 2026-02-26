@@ -41,7 +41,7 @@
 
 - [x] **Phase 16: Tech Debt Closure** — Commit and verify already-built AnthropicClient, CompactionStats, and MCP WAL code (completed 2026-02-26)
 - [x] **Phase 17: Re-Diff Baseline** — Wire frame maintenance into the ingest pipeline with full re-traverse + diff correctness oracle (completed 2026-02-26)
-- [ ] **Phase 18: Incremental Edge Addition** — PathExtender module with per-hop delta derivation for EdgeAdded events
+- [x] **Phase 18: Incremental Edge Addition** — PathExtender module with per-hop delta derivation for EdgeAdded events (completed 2026-02-26)
 - [ ] **Phase 19: Incremental Edge and Node Removal** — Targeted path retraction for EdgeRemoved and NodeRemoved events
 - [ ] **Phase 20: Incremental Property Change** — Filter re-evaluation for PropertyChanged events producing path assertions and retractions
 - [ ] **Phase 21: Performance and Benchmarks** — Verify O(affected) scaling, Criterion benchmarks, stress test, regression gate
@@ -83,7 +83,7 @@ Plans:
   2. Backward prefix resolution finds existing partial paths from anchor to the hop before the new edge
   3. Forward path extension traverses from the new edge endpoint through remaining hops to produce complete paths
   4. Incremental EdgeAdded produces identical frame state to the Phase 17 full re-traverse baseline (oracle verified for every test case)
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [ ] 18-01-PLAN.md — Create PathExtender module with extend_edge_added, backward prefix, forward extension
 - [ ] 18-02-PLAN.md — Wire PathExtender into engine ingest pipeline, extend oracle tests
@@ -144,7 +144,7 @@ Plans:
 | 15. Harden MCP Binary | v2.0 | 1/1 | Complete | 2026-02-26 |
 | 16. Tech Debt Closure | 1/1 | Complete    | 2026-02-26 | - |
 | 17. Re-Diff Baseline | 1/1 | Complete    | 2026-02-26 | - |
-| 18. Incremental Edge Addition | 1/2 | In Progress|  | - |
+| 18. Incremental Edge Addition | 2/2 | Complete   | 2026-02-26 | - |
 | 19. Incremental Edge and Node Removal | v3.0 | 0/? | Not started | - |
 | 20. Incremental Property Change | v3.0 | 0/? | Not started | - |
 | 21. Performance and Benchmarks | v3.0 | 0/? | Not started | - |
