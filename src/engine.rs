@@ -244,9 +244,10 @@ impl Engine {
     /// 1. Push event to ring buffer, receiving an assigned epoch.
     /// 2. Apply the mutation to the property graph.
     /// 3. Query the inverted index for affected frames (main thread, EVAL-03).
-    /// 4. Fan out affected frame evaluation to parallel threads via
-    ///    `std::thread::scope` (EVAL-01). Each thread acquires a read lock
-    ///    on the frame to check net_delta, then runs Tier 1 check.
+    /// 4. Fan out affected frame maintenance + evaluation to parallel threads
+    ///    via `std::thread::scope` (EVAL-01). Each thread acquires a write lock
+    ///    on the frame, calls `rematerialize` to re-traverse the graph, then
+    ///    runs Tier 1 check on the updated net_delta.
     /// 5. For EdgeAdded events, trigger embryonic observation and
     ///    auto-promote any candidates that meet their threshold.
     /// 6. If compaction worker is active, check each frame's tuple count
@@ -355,31 +356,17 @@ impl Engine {
             // Track evaluation count
             self.eval_count += affected_frames.len() as u64;
 
-            // Capture previous_deltas reference for use in scoped threads
+            // Capture references for use in shared helper
             let prev_deltas = &self.previous_deltas;
+            let graph_ref = &self.graph;
 
-            // Use std::thread::scope to fan out frame evaluation
-            let delta_updates: Vec<(u64, i64)> = std::thread::scope(|s| {
-                let handles: Vec<std::thread::ScopedJoinHandle<'_, (u64, i64)>> = affected_frames
-                    .iter()
-                    .map(|(frame_id, frame_arc)| {
-                        let fid = *frame_id;
-                        let arc: Arc<RwLock<Frame>> = Arc::clone(frame_arc);
-                        s.spawn(move || {
-                            let frame = arc.read().expect("RwLock poisoned");
-                            let previous = prev_deltas.get(&fid).copied().unwrap_or(0);
-                            let current = frame.net_delta();
-                            let _changed = tier1_check(previous, current);
-                            (fid, current)
-                        })
-                    })
-                    .collect();
-
-                handles
-                    .into_iter()
-                    .map(|h| h.join().expect("Scoped thread panicked"))
-                    .collect()
-            });
+            // Step 4: Write-lock rematerialize + tier1_check for each affected frame
+            let delta_updates: Vec<(u64, i64)> = Self::maintain_and_evaluate_frames(
+                &affected_frames,
+                graph_ref,
+                epoch,
+                prev_deltas,
+            );
 
             // Merge delta updates back on main thread and update hysteresis
             for (fid, current) in delta_updates {
@@ -659,27 +646,24 @@ impl Engine {
 
             self.eval_count += affected_frames.len() as u64;
 
+            // Determine epoch: use the max epoch_end across all coalesced entries
+            let flush_epoch = batch
+                .entries
+                .iter()
+                .map(|e| e.epoch_end)
+                .max()
+                .unwrap_or(self.current_epoch);
+
             let prev_deltas = &self.previous_deltas;
-            let delta_updates: Vec<(u64, i64)> = std::thread::scope(|s| {
-                let handles: Vec<_> = affected_frames
-                    .iter()
-                    .map(|(frame_id, frame_arc)| {
-                        let fid = *frame_id;
-                        let arc = Arc::clone(frame_arc);
-                        s.spawn(move || {
-                            let frame = arc.read().expect("RwLock poisoned");
-                            let previous = prev_deltas.get(&fid).copied().unwrap_or(0);
-                            let current = frame.net_delta();
-                            let _changed = tier1_check(previous, current);
-                            (fid, current)
-                        })
-                    })
-                    .collect();
-                handles
-                    .into_iter()
-                    .map(|h| h.join().expect("Scoped thread panicked"))
-                    .collect()
-            });
+            let graph_ref = &self.graph;
+
+            // Write-lock rematerialize + tier1_check for each affected frame
+            let delta_updates: Vec<(u64, i64)> = Self::maintain_and_evaluate_frames(
+                &affected_frames,
+                graph_ref,
+                flush_epoch,
+                prev_deltas,
+            );
 
             for (fid, current) in delta_updates {
                 self.previous_deltas.insert(fid, current);
@@ -756,6 +740,65 @@ impl Engine {
         } else {
             0
         }
+    }
+
+    /// Maintains and evaluates a set of frames by acquiring write locks,
+    /// re-materializing each frame from the current graph state, and running
+    /// Tier 1 delta checks.
+    ///
+    /// This shared helper is used by both [`ingest`](Engine::ingest) Step 4
+    /// and [`flush_coalescer`](Engine::flush_coalescer) to avoid code duplication.
+    /// Each frame is processed in a parallel scoped thread.
+    ///
+    /// # Arguments
+    ///
+    /// * `frames` - (frame_id, frame_arc) pairs to evaluate.
+    /// * `graph` - Immutable reference to the current graph state.
+    /// * `epoch` - The epoch to pass to `rematerialize`.
+    /// * `prev_deltas` - Previous net_delta per frame for Tier 1 comparison.
+    ///
+    /// # Returns
+    ///
+    /// Vector of (frame_id, current_net_delta) pairs for post-processing.
+    fn maintain_and_evaluate_frames(
+        frames: &[(u64, Arc<RwLock<Frame>>)],
+        graph: &Graph,
+        epoch: Epoch,
+        prev_deltas: &HashMap<u64, i64>,
+    ) -> Vec<(u64, i64)> {
+        std::thread::scope(|s| {
+            let handles: Vec<std::thread::ScopedJoinHandle<'_, (u64, i64)>> = frames
+                .iter()
+                .map(|(frame_id, frame_arc)| {
+                    let fid = *frame_id;
+                    let arc: Arc<RwLock<Frame>> = Arc::clone(frame_arc);
+                    s.spawn(move || {
+                        let mut frame = arc.write().expect("RwLock poisoned");
+                        frame.rematerialize(graph, epoch);
+                        let previous = prev_deltas.get(&fid).copied().unwrap_or(0);
+                        let current = frame.net_delta();
+                        let _changed = tier1_check(previous, current);
+                        (fid, current)
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("Scoped thread panicked"))
+                .collect()
+        })
+    }
+
+    /// Returns a reference to the engine's graph (test-only accessor).
+    ///
+    /// Provides read access to the property graph for oracle test harness
+    /// verification, where a fresh Frame must be materialized against the
+    /// current graph state for comparison.
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn graph(&self) -> &Graph {
+        &self.graph
     }
 
     /// Extracts all unique NodeIds from a frame's current materialized paths.
@@ -1557,7 +1600,7 @@ mod tests {
             one_hop_pattern(TypeId(100), TypeId(20)),
             Epoch(10),
         );
-        assert!(engine.query_frame(fid).unwrap().len() >= 1);
+        assert!(!engine.query_frame(fid).unwrap().is_empty());
 
         // Flush the setup events so they don't interfere with the test
         engine.flush_coalescer();
@@ -1854,15 +1897,13 @@ mod tests {
                 type_id: TypeId(10),
             });
         }
-        let mut edge_id = 0u64;
-        for i in 1..500u64 {
+        for (edge_id, i) in (1..500u64).enumerate() {
             engine.ingest(Event::EdgeAdded {
-                edge_id: EdgeId(edge_id),
+                edge_id: EdgeId(edge_id as u64),
                 source: NodeId(i),
                 target: NodeId(i + 1),
                 type_id: TypeId(100),
             });
-            edge_id += 1;
         }
 
         // Register 50 frames
@@ -1967,7 +2008,7 @@ mod tests {
             let mut reads = 0u64;
             while start.elapsed() < duration {
                 let mut eng = reader_engine.lock().expect("Mutex poisoned");
-                let fid = (reads % 10) as u64;
+                let fid = reads % 10;
                 let _ = eng.query_frame(fid);
                 reads += 1;
                 // Drop lock immediately

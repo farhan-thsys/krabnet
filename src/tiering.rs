@@ -357,7 +357,7 @@ mod tests {
         let config = TierConfig::default();
         let score = priority_score(100, 50, 50, &config);
         assert!(
-            score >= 0.2 && score <= 0.7,
+            (0.2..=0.7).contains(&score),
             "Expected Warm score in [0.2, 0.7], got {score}"
         );
         assert_eq!(recommend_tier(score), FrameTier::Warm);
@@ -376,7 +376,7 @@ mod tests {
         // raw = 0 * 0.4 + 0 * 0.3 + 1.0 * 0.3 = 0.3
         let score_zero = priority_score(0, 0, 0, &config);
         assert!(
-            score_zero >= 0.0 && score_zero <= 1.0,
+            (0.0..=1.0).contains(&score_zero),
             "Score should be in [0.0, 1.0], got {score_zero}"
         );
     }
