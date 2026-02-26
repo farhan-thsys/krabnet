@@ -1,4 +1,4 @@
-//! Incremental path extension and retraction for edge/node mutations.
+//! Incremental path extension and retraction for edge/node/property mutations.
 //!
 //! This module provides the algorithmic core for incremental path maintenance:
 //!
@@ -8,6 +8,8 @@
 //!   removed edge, with parallel-edge survival checks to avoid over-retraction.
 //! - **[`retract_node_removed`]**: Identifies materialized paths containing a
 //!   removed node at any position.
+//! - **[`reevaluate_property_changed`]**: Re-evaluates hop filters when a node's
+//!   property changes, computing both retracted paths (-1) and newly valid paths (+1).
 //!
 //! ## Edge-Added Extension
 //!
@@ -295,6 +297,219 @@ pub fn retract_node_removed(
         .collect();
 
     NodeRemovedDeltas { retracted_paths }
+}
+
+/// Result of incremental property-change re-evaluation.
+///
+/// Contains paths to retract (-1 deltas) because a hop filter no longer
+/// passes after the property change, and new paths to assert (+1 deltas)
+/// because a hop filter now passes where it previously did not.
+#[derive(Debug)]
+pub struct PropertyChangedDeltas {
+    /// Paths to retract as -1 deltas (no longer satisfy filters).
+    pub retracted_paths: Vec<Vec<NodeId>>,
+    /// New paths to assert as +1 deltas (newly satisfy filters).
+    pub new_paths: Vec<Vec<NodeId>>,
+}
+
+/// Re-evaluates hop filters for a frame when a node's property changes.
+///
+/// Scans existing materialized paths for those containing the affected
+/// node at any hop position with a property filter. Paths where the
+/// filter no longer passes are retracted. New paths where the filter
+/// now passes are discovered via backward prefix resolution and forward
+/// extension (reusing Phase 18 DFS helpers).
+///
+/// # Arguments
+///
+/// * `anchor` - The frame's anchor node.
+/// * `pattern` - The frame's hop pattern (sequence of [`HopSpec`]).
+/// * `graph` - The current graph state (property already changed).
+/// * `current_paths` - References to the frame's currently materialized paths.
+/// * `changed_node` - The node whose property changed.
+///
+/// # Returns
+///
+/// [`PropertyChangedDeltas`] containing both retracted and new paths.
+pub fn reevaluate_property_changed(
+    anchor: NodeId,
+    pattern: &[HopSpec],
+    graph: &Graph,
+    current_paths: &[&Vec<NodeId>],
+    changed_node: NodeId,
+) -> PropertyChangedDeltas {
+    // Early exit: empty pattern or no hop has a property filter.
+    if pattern.is_empty() || !pattern.iter().any(|hop| !matches!(hop.filter, Filter::None)) {
+        return PropertyChangedDeltas {
+            retracted_paths: Vec::new(),
+            new_paths: Vec::new(),
+        };
+    }
+
+    // Step 1: Retract newly-invalid paths.
+    let mut retracted_paths: Vec<Vec<NodeId>> = Vec::new();
+    for path in current_paths {
+        if path.len() != pattern.len() + 1 {
+            continue;
+        }
+        if path_invalidated_by_property_change(path, pattern, graph, changed_node) {
+            retracted_paths.push(path.to_vec());
+        }
+    }
+    // Deduplicate retracted paths.
+    let mut seen = HashSet::new();
+    retracted_paths.retain(|p| seen.insert(p.clone()));
+
+    // Step 2: Assert newly-valid paths.
+    let existing: HashSet<&Vec<NodeId>> = current_paths.iter().copied().collect();
+    let retracted_set: HashSet<Vec<NodeId>> = retracted_paths.iter().cloned().collect();
+
+    let mut new_paths: Vec<Vec<NodeId>> = Vec::new();
+
+    for (hop_idx, hop) in pattern.iter().enumerate() {
+        // Only check hops with property filters.
+        if matches!(hop.filter, Filter::None) {
+            continue;
+        }
+
+        // Check if the changed node satisfies this hop's full constraint
+        // (target_type + property filter).
+        if !node_passes_hop(hop, changed_node, graph) {
+            continue;
+        }
+
+        // The changed node satisfies this hop's filter. Find all complete
+        // paths that pass through the changed node at position hop_idx+1.
+        let origins = find_hop_origins(graph, hop, changed_node);
+
+        for origin in origins {
+            let prefixes = backward_prefixes(anchor, pattern, graph, hop_idx, origin);
+            for prefix in prefixes {
+                extend_forward(graph, prefix, changed_node, pattern, hop_idx, &mut new_paths);
+            }
+        }
+    }
+
+    // Deduplicate new paths.
+    let mut seen_new = HashSet::new();
+    new_paths.retain(|p| seen_new.insert(p.clone()));
+
+    // Remove paths already in current materialized set (avoid double-assertion).
+    new_paths.retain(|p| !existing.contains(p));
+
+    // Remove paths in the retracted set (defensive).
+    new_paths.retain(|p| !retracted_set.contains(p));
+
+    PropertyChangedDeltas {
+        retracted_paths,
+        new_paths,
+    }
+}
+
+/// Checks whether a materialized path is invalidated because the changed
+/// node's property no longer satisfies a hop filter.
+///
+/// For each hop K in the pattern, if `path[K+1] == changed_node` and hop K
+/// has a property filter, re-evaluates the full hop constraint (target_type
+/// and property filter). If any hop's constraint no longer passes, the path
+/// is invalid.
+fn path_invalidated_by_property_change(
+    path: &[NodeId],
+    pattern: &[HopSpec],
+    graph: &Graph,
+    changed_node: NodeId,
+) -> bool {
+    for (hop_idx, hop) in pattern.iter().enumerate() {
+        let reached_node = path[hop_idx + 1];
+
+        // Only check hops where the changed node is the reached node.
+        if reached_node != changed_node {
+            continue;
+        }
+
+        // Only relevant if this hop has a property filter.
+        if matches!(hop.filter, Filter::None) {
+            continue;
+        }
+
+        // Re-evaluate the full hop constraint on the changed node.
+        if !node_passes_hop(hop, changed_node, graph) {
+            return true; // Path invalidated by this hop.
+        }
+    }
+    false
+}
+
+/// Checks if a node satisfies a hop's node-side constraints: target_type
+/// and property filter. Does NOT check edge_type (that is verified by the
+/// edge, not the node).
+///
+/// Returns `true` if the node passes both the target_type and property
+/// filter checks.
+fn node_passes_hop(hop: &HopSpec, node_id: NodeId, graph: &Graph) -> bool {
+    // Check target type (if specified).
+    if let Some(target_type) = hop.target_type {
+        if graph.get_node_type(node_id) != Some(target_type) {
+            return false;
+        }
+    }
+
+    // Check property filter.
+    match &hop.filter {
+        Filter::None => true,
+        Filter::PropertyEquals { key, value } => {
+            graph.get_property(node_id, *key) == Some(value)
+        }
+        Filter::HasProperty { key } => graph.get_property(node_id, *key).is_some(),
+    }
+}
+
+/// Finds all nodes that have an edge TO `reached_node` matching the hop's
+/// direction and edge type. These are the "origin" nodes that could reach
+/// `reached_node` via this hop.
+///
+/// - For Outgoing hop: origin has outgoing edge to reached_node, so query
+///   `graph.neighbors(reached_node, Incoming, edge_type)` to find origins.
+/// - For Incoming hop: origin follows incoming edge, reached_node is the
+///   source, so query `graph.neighbors(reached_node, Outgoing, edge_type)`.
+/// - For Any: query both directions, deduplicate.
+fn find_hop_origins(graph: &Graph, hop: &HopSpec, reached_node: NodeId) -> Vec<NodeId> {
+    let mut origins = Vec::new();
+
+    match hop.direction {
+        Direction::Outgoing => {
+            // Origin->reached via outgoing edge => reached has incoming from origin.
+            let neighbors = graph.neighbors(reached_node, Direction::Incoming, hop.edge_type);
+            for (_eid, neighbor) in neighbors {
+                origins.push(neighbor);
+            }
+        }
+        Direction::Incoming => {
+            // Origin follows incoming edge from reached_node. The traversal
+            // direction is "Incoming" meaning the origin node has incoming edges,
+            // reached_node is the source of the edge (origin is target).
+            // So reached_node has outgoing edge to origin.
+            let neighbors = graph.neighbors(reached_node, Direction::Outgoing, hop.edge_type);
+            for (_eid, neighbor) in neighbors {
+                origins.push(neighbor);
+            }
+        }
+        Direction::Any => {
+            // Try both directions, deduplicate.
+            let incoming = graph.neighbors(reached_node, Direction::Incoming, hop.edge_type);
+            for (_eid, neighbor) in incoming {
+                origins.push(neighbor);
+            }
+            let outgoing = graph.neighbors(reached_node, Direction::Outgoing, hop.edge_type);
+            for (_eid, neighbor) in outgoing {
+                if !origins.contains(&neighbor) {
+                    origins.push(neighbor);
+                }
+            }
+        }
+    }
+
+    origins
 }
 
 /// Checks if a new edge could satisfy the given hop specification for

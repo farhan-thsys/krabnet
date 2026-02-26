@@ -69,8 +69,8 @@ pub use engine::Engine;
 pub use grpc::KrabnetServer;
 pub use mcp::McpServer;
 pub use path_extender::{
-    extend_edge_added, retract_edge_removed, retract_node_removed, EdgeAddedDeltas,
-    EdgeRemovedDeltas, NodeRemovedDeltas,
+    extend_edge_added, reevaluate_property_changed, retract_edge_removed, retract_node_removed,
+    EdgeAddedDeltas, EdgeRemovedDeltas, NodeRemovedDeltas, PropertyChangedDeltas,
 };
 pub use frame::Frame;
 pub use graph::Graph;
