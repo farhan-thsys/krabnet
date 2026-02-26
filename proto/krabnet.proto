@@ -189,4 +189,8 @@ message GetStatsResponse {
   uint64 total_tuples         = 7;
   uint64 embryonic_candidates = 8;
   uint64 embryonic_templates  = 9;
+  optional uint64 compactions_completed    = 10;
+  optional uint64 compaction_tuples_before = 11;
+  optional uint64 compaction_tuples_after  = 12;
+  optional uint64 total_compaction_time_us = 13;
 }
