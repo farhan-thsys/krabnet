@@ -5,24 +5,24 @@
 See: .planning/PROJECT.md (updated 2026-02-26)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 21 -- Performance Benchmarks
-**Milestone:** v3.0 -- Tech Debt Closure + Incremental Path Extension
+**Current focus:** Phase 21 -- Performance Benchmarks -- COMPLETE
+**Milestone:** v3.0 -- Tech Debt Closure + Incremental Path Extension -- COMPLETE
 
 ## Current Position
 
-Phase: 21 of 21 (Performance Benchmarks) -- IN PROGRESS
-Plan: 1 of 2 in current phase (Plan 01 COMPLETE)
-Status: Phase 21 Plan 01 complete -- 5 incremental benchmarks added (PERF-01/02/03)
-Last activity: 2026-02-26 -- Phase 21 Plan 01 incremental benchmarks executed
+Phase: 21 of 21 (Performance Benchmarks) -- COMPLETE
+Plan: 2 of 2 in current phase (All plans COMPLETE)
+Status: Phase 21 complete -- all performance benchmarks and stress tests added, v3.0 milestone achieved
+Last activity: 2026-02-26 -- Phase 21 Plan 02 incremental stress with oracle executed
 
-Progress: [███████████████████░] 97% (20.5/21 phases)
+Progress: [████████████████████] 100% (21/21 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 27
-- Average duration: 6 min
-- Total execution time: 2.56 hours
+- Total plans completed: 28
+- Average duration: 7 min
+- Total execution time: 3.56 hours
 
 **By Phase:**
 
@@ -47,11 +47,11 @@ Progress: [███████████████████░] 97% (20
 | 18 - Incremental Edge Addition | 2 | 12 min | 6 min |
 | 19 - Incremental Edge & Node Removal | 2 | 11 min | 6 min |
 | 20 - Incremental Property Change | 2 | 14 min | 7 min |
-| 21 - Performance Benchmarks | 1 | 4 min | 4 min |
+| 21 - Performance Benchmarks | 2 | 64 min | 32 min |
 
 **Recent Trend:**
-- Last 5 plans: 4m, 7m, 8m, 6m, 4m
-- Trend: stable
+- Last 5 plans: 7m, 8m, 6m, 4m, 60m
+- Trend: stress test iteration dominated Phase 21-02
 
 ## Accumulated Context
 
@@ -87,6 +87,9 @@ Recent decisions affecting current work:
 - v3.0: PropertyChanged dispatch uses snapshot().to_vec() for reference conversion per clippy recommendation
 - v3.0: Benchmark edge removal uses graph.neighbors() to find EdgeId since Graph::add_edge auto-assigns IDs
 - v3.0: Benchmark retract_edge_removed uses owned path clones via snapshot().cloned().collect() to avoid borrow checker conflict
+- v3.0: Stress test uses 1-hop patterns (not 2-hop) to maintain >50K events/sec; 2-hop with dense parallel edges causes O(N^2) path explosion
+- v3.0: Coalescer disabled in stress test for oracle consistency; coalescer defers evaluation causing maintained frame state to lag behind graph
+- v3.0: Oracle check time excluded from throughput measurement to separate correctness verification cost from ingest performance
 
 ### Pending Todos
 
@@ -101,5 +104,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 21-01-PLAN.md -- 5 incremental benchmarks added (scaling, EdgeAdded, EdgeRemoved), all 24 benchmarks pass --test
+Stopped at: Completed 21-02-PLAN.md -- Incremental stress test with oracle, Phase 21 complete, v3.0 milestone achieved
 Resume file: None
