@@ -3056,4 +3056,328 @@ mod tests {
             "Path should be [1,2,3,4]"
         );
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Phase 19: Incremental Edge & Node Removal Oracle Tests
+    // ══════════════════════════════════════════════════════════════════════
+    //
+    // These tests validate that the incremental retraction wiring in
+    // maintain_and_evaluate_frames (EdgeRemoved -> retract_edge_removed,
+    // NodeRemoved -> retract_node_removed) produces identical frame state
+    // to the full DFS rematerialize baseline.
+
+    // ── Oracle Test 12: Multi-hop edge removed in middle ─────────────────
+
+    #[test]
+    fn test_oracle_multi_hop_edge_removed_middle() {
+        let mut engine = Engine::new(64);
+
+        // Build chain: 1->2->3, all TypeId(100)
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(2), target: NodeId(3), type_id: TypeId(100),
+        });
+
+        // Register 2-hop frame: anchor=1, pattern [Out/100, Out/100]
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+        ];
+        let fid = engine.register_frame(NodeId(1), pattern, reg_epoch);
+
+        // Oracle check: 1 path [1,2,3]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path [1,2,3]");
+        assert_eq!(paths[0], vec![NodeId(1), NodeId(2), NodeId(3)]);
+
+        // Remove edge 2->3 (graph EdgeId(1))
+        engine.ingest(Event::EdgeRemoved {
+            edge_id: EdgeId(1), source: NodeId(2), target: NodeId(3),
+        });
+
+        // Oracle check: 0 paths (the only path [1,2,3] is broken at hop 1)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 0, "Should have 0 paths after removing edge 2->3");
+    }
+
+    // ── Oracle Test 13: Parallel edge removal -- surviving edge ──────────
+
+    #[test]
+    fn test_oracle_parallel_edge_removal_survives() {
+        let mut engine = Engine::new(64);
+
+        // Build: 2 nodes, TWO outgoing edges 1->2 (both TypeId(100), different EdgeIds)
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+
+        // Register 1-hop frame: anchor=1, pattern [Out/100/type20]
+        let fid = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Oracle check: 1 path [1,2]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path [1,2] with parallel edges");
+
+        // Remove the first edge (graph EdgeId(0))
+        engine.ingest(Event::EdgeRemoved {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2),
+        });
+
+        // Oracle check: STILL 1 path [1,2] (second parallel edge survives)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should still have 1 path (parallel edge survives)");
+        assert_eq!(paths[0], vec![NodeId(1), NodeId(2)]);
+    }
+
+    // ── Oracle Test 14: Node removed from diamond ────────────────────────
+
+    #[test]
+    fn test_oracle_node_removed_diamond() {
+        let mut engine = Engine::new(64);
+
+        // Build diamond: 1->2, 1->3, 2->4, 3->4. All TypeId(100).
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(4), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(3), type_id: TypeId(100),
+        });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(2), source: NodeId(2), target: NodeId(4), type_id: TypeId(100),
+        });
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(3), source: NodeId(3), target: NodeId(4), type_id: TypeId(100),
+        });
+
+        // Register 2-hop frame: anchor=1, [Out/100/type20, Out/100/type20]
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+        ];
+        let fid = engine.register_frame(NodeId(1), pattern, reg_epoch);
+
+        // Oracle check: 2 paths [1,2,4] and [1,3,4]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 2, "Diamond should produce 2 paths");
+
+        // Remove node 2 -- should retract path [1,2,4], keep [1,3,4]
+        engine.ingest(Event::NodeRemoved { node_id: NodeId(2) });
+
+        // Oracle check: only path [1,3,4] should remain
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path after removing node 2");
+        assert_eq!(paths[0], vec![NodeId(1), NodeId(3), NodeId(4)]);
+    }
+
+    // ── Oracle Test 15: Multi-frame edge removal ─────────────────────────
+
+    #[test]
+    fn test_oracle_multi_frame_edge_removal() {
+        let mut engine = Engine::new(64);
+
+        // Build: 3 nodes (1, 2, 3), edges 1->2 and 2->3
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(2), target: NodeId(3), type_id: TypeId(100),
+        });
+
+        // Register Frame A: anchor=1, 1-hop [Out/100/type20]
+        let fid_a = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Register Frame B: anchor=1, 2-hop [Out/100/type20, Out/100/type20]
+        let pattern_b = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+        ];
+        let fid_b = engine.register_frame(NodeId(1), pattern_b, reg_epoch);
+
+        // Oracle check both: Frame A has [1,2], Frame B has [1,2,3]
+        oracle_check(&mut engine, fid_a);
+        oracle_check(&mut engine, fid_b);
+        assert_eq!(engine.query_frame(fid_a).unwrap().len(), 1, "Frame A: 1 path");
+        assert_eq!(engine.query_frame(fid_b).unwrap().len(), 1, "Frame B: 1 path");
+
+        // Remove edge 1->2 (graph EdgeId(0))
+        engine.ingest(Event::EdgeRemoved {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2),
+        });
+
+        // Oracle check both: Frame A loses [1,2], Frame B loses [1,2,3]
+        oracle_check(&mut engine, fid_a);
+        oracle_check(&mut engine, fid_b);
+        assert_eq!(engine.query_frame(fid_a).unwrap().len(), 0, "Frame A: 0 paths after removal");
+        assert_eq!(engine.query_frame(fid_b).unwrap().len(), 0, "Frame B: 0 paths after removal");
+    }
+
+    // ── Oracle Test 16: Sequential add-remove-add-remove cycle ───────────
+
+    #[test]
+    fn test_oracle_sequential_add_remove_add_remove() {
+        let mut engine = Engine::new(64);
+
+        // Build: 2 nodes (1, 2)
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        let reg_epoch = engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+
+        // Register 1-hop frame: anchor=1, [Out/100/type20]
+        let fid = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Oracle check: 0 paths (no edges)
+        oracle_check(&mut engine, fid);
+        assert_eq!(engine.query_frame(fid).unwrap().len(), 0, "Start: 0 paths");
+
+        // Step 1: EdgeAdded 1->2 -- path appears
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        oracle_check(&mut engine, fid);
+        assert_eq!(engine.query_frame(fid).unwrap().len(), 1, "After add 1: 1 path");
+
+        // Step 2: EdgeRemoved 1->2 -- path retracted
+        engine.ingest(Event::EdgeRemoved {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2),
+        });
+        oracle_check(&mut engine, fid);
+        assert_eq!(engine.query_frame(fid).unwrap().len(), 0, "After remove 1: 0 paths");
+
+        // Step 3: EdgeAdded 1->2 again -- path re-appears
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        oracle_check(&mut engine, fid);
+        assert_eq!(engine.query_frame(fid).unwrap().len(), 1, "After add 2: 1 path");
+
+        // Step 4: EdgeRemoved 1->2 again -- path retracted again
+        engine.ingest(Event::EdgeRemoved {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(2),
+        });
+        oracle_check(&mut engine, fid);
+        assert_eq!(engine.query_frame(fid).unwrap().len(), 0, "After remove 2: 0 paths");
+    }
+
+    // ── Oracle Test 17: Node removed cascade -- no ghost paths ───────────
+
+    #[test]
+    fn test_oracle_node_removed_cascade_no_ghost_paths() {
+        let mut engine = Engine::new(64);
+
+        // Build chain: 1->2->3->4, all TypeId(100)
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(4), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(2), target: NodeId(3), type_id: TypeId(100),
+        });
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(2), source: NodeId(3), target: NodeId(4), type_id: TypeId(100),
+        });
+
+        // Register 3-hop frame: anchor=1, [Out/100/type20, Out/100/type20, Out/100/type20]
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+        ];
+        let fid = engine.register_frame(NodeId(1), pattern, reg_epoch);
+
+        // Oracle check: 1 path [1,2,3,4]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path [1,2,3,4]");
+        assert_eq!(paths[0], vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4)]);
+
+        // Remove node 3 -- path [1,2,3,4] should be retracted (node 3 at position 2)
+        engine.ingest(Event::NodeRemoved { node_id: NodeId(3) });
+
+        // Oracle check: 0 paths -- no ghost paths remain
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 0, "Should have 0 paths after removing node 3");
+    }
 }
