@@ -57,7 +57,7 @@ use crate::ring_buffer::RingBuffer;
 use crate::routing::InvertedIndex;
 use crate::tiering::{FrameActivityTracker, HysteresisState, TierConfig};
 use crate::trunk::{detect_trunks, pinned_frame_ids};
-use crate::types::{Delta, Epoch, Event, FrameTier, HopSpec, NodeId};
+use crate::types::{Delta, Epoch, Event, FrameTier, HopSpec, NodeId, TypeId};
 
 /// Aggregate statistics for the engine.
 ///
@@ -83,6 +83,19 @@ pub struct EngineStats {
     pub embryonic_candidates: usize,
     /// Number of registered embryonic templates.
     pub embryonic_templates: usize,
+}
+
+/// Context captured before a node is removed from the graph.
+///
+/// Stored temporarily in `ingest()` Step 2 before `graph.remove_node()`
+/// destroys the node's adjacency. Currently holds only the node_id --
+/// the retraction algorithm scans paths for node presence rather than
+/// using edge adjacency.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct DeletionContext {
+    /// The node being removed.
+    pub node_id: NodeId,
 }
 
 /// Top-level engine orchestrating all Krabnet components.
@@ -258,11 +271,14 @@ impl Engine {
         let epoch = self.ring_buffer.push(event.clone());
 
         // Step 2: Apply mutation to graph
+        // Capture DeletionContext before graph.remove_node() destroys adjacency.
+        let mut _deletion_ctx: Option<DeletionContext> = None;
         match &event {
             Event::NodeAdded { node_id, type_id } => {
                 self.graph.add_node(*node_id, *type_id);
             }
             Event::NodeRemoved { node_id } => {
+                _deletion_ctx = Some(DeletionContext { node_id: *node_id });
                 self.graph.remove_node(*node_id);
             }
             Event::EdgeAdded {
@@ -361,13 +377,15 @@ impl Engine {
             let graph_ref = &self.graph;
 
             // Step 4: Write-lock maintain + tier1_check for each affected frame
-            // EdgeAdded events use incremental path extension; all others use full rematerialize.
+            // EdgeAdded uses incremental +1, EdgeRemoved/NodeRemoved use incremental -1,
+            // all others use full rematerialize.
             let delta_updates: Vec<(u64, i64)> = Self::maintain_and_evaluate_frames(
                 &affected_frames,
                 graph_ref,
                 epoch,
                 prev_deltas,
                 &event,
+                false,
             );
 
             // Merge delta updates back on main thread and update hysteresis
@@ -663,9 +681,11 @@ impl Engine {
             let prev_deltas = &self.previous_deltas;
             let graph_ref = &self.graph;
 
-            // Coalescer batches multiple events -- always rematerialize (incremental dispatch deferred).
-            // Use a non-EdgeAdded sentinel to trigger the fallback rematerialize branch.
-            let sentinel = Event::NodeRemoved { node_id: NodeId(0) };
+            // Coalescer batches multiple events -- always rematerialize.
+            // Use force_rematerialize=true to bypass incremental dispatch.
+            // The sentinel event is irrelevant (force_rematerialize skips the match),
+            // but we still need to pass a valid &Event reference to satisfy the signature.
+            let sentinel = Event::NodeAdded { node_id: NodeId(0), type_id: TypeId(0) };
 
             // Write-lock rematerialize + tier1_check for each affected frame
             let delta_updates: Vec<(u64, i64)> = Self::maintain_and_evaluate_frames(
@@ -674,6 +694,7 @@ impl Engine {
                 flush_epoch,
                 prev_deltas,
                 &sentinel,
+                true,
             );
 
             for (fid, current) in delta_updates {
@@ -754,13 +775,21 @@ impl Engine {
     }
 
     /// Maintains and evaluates a set of frames by acquiring write locks,
-    /// dispatching to incremental path extension for EdgeAdded events or
-    /// full re-materialization for all other event types, and running
-    /// Tier 1 delta checks.
+    /// dispatching to the appropriate incremental path extension/retraction
+    /// algorithm based on event type, and running Tier 1 delta checks.
     ///
     /// This shared helper is used by both [`ingest`](Engine::ingest) Step 4
     /// and [`flush_coalescer`](Engine::flush_coalescer) to avoid code duplication.
     /// Each frame is processed in a parallel scoped thread.
+    ///
+    /// # Dispatch strategy
+    ///
+    /// - **EdgeAdded**: Incremental +1 via [`crate::path_extender::extend_edge_added`].
+    /// - **EdgeRemoved**: Incremental -1 via [`crate::path_extender::retract_edge_removed`].
+    /// - **NodeRemoved**: Incremental -1 via [`crate::path_extender::retract_node_removed`].
+    /// - **Other events** (PropertyChanged, NodeAdded): Full re-traverse via `rematerialize`.
+    /// - **force_rematerialize=true**: Bypasses event dispatch entirely; always rematerializes.
+    ///   Used by [`flush_coalescer`](Engine::flush_coalescer) where multiple events are batched.
     ///
     /// # Arguments
     ///
@@ -768,8 +797,9 @@ impl Engine {
     /// * `graph` - Immutable reference to the current graph state.
     /// * `epoch` - The epoch to pass to `rematerialize` or `apply_delta`.
     /// * `prev_deltas` - Previous net_delta per frame for Tier 1 comparison.
-    /// * `event` - The event that triggered maintenance; EdgeAdded uses
-    ///   incremental path extension, all others use full rematerialize.
+    /// * `event` - The event that triggered maintenance.
+    /// * `force_rematerialize` - If true, bypass incremental dispatch and always
+    ///   call `rematerialize`. Used by the coalescer flush path.
     ///
     /// # Returns
     ///
@@ -780,6 +810,7 @@ impl Engine {
         epoch: Epoch,
         prev_deltas: &HashMap<u64, i64>,
         event: &Event,
+        force_rematerialize: bool,
     ) -> Vec<(u64, i64)> {
         std::thread::scope(|s| {
             let handles: Vec<std::thread::ScopedJoinHandle<'_, (u64, i64)>> = frames
@@ -789,24 +820,49 @@ impl Engine {
                     let arc: Arc<RwLock<Frame>> = Arc::clone(frame_arc);
                     s.spawn(move || {
                         let mut frame = arc.write().expect("RwLock poisoned");
-                        match event {
-                            Event::EdgeAdded { source, target, type_id, .. } => {
-                                // Incremental: compute new paths via PathExtender
-                                let deltas = crate::path_extender::extend_edge_added(
-                                    frame.anchor(),
-                                    frame.pattern(),
-                                    graph,
-                                    *source,
-                                    *target,
-                                    *type_id,
-                                );
-                                for path in deltas.new_paths {
-                                    frame.apply_delta(path, epoch, Delta(1));
+                        if force_rematerialize {
+                            frame.rematerialize(graph, epoch);
+                        } else {
+                            match event {
+                                Event::EdgeAdded { source, target, type_id, .. } => {
+                                    // Incremental +1: compute new paths via PathExtender
+                                    let deltas = crate::path_extender::extend_edge_added(
+                                        frame.anchor(),
+                                        frame.pattern(),
+                                        graph,
+                                        *source,
+                                        *target,
+                                        *type_id,
+                                    );
+                                    for path in deltas.new_paths {
+                                        frame.apply_delta(path, epoch, Delta(1));
+                                    }
                                 }
-                            }
-                            _ => {
-                                // Fallback: full re-traverse for non-EdgeAdded events
-                                frame.rematerialize(graph, epoch);
+                                Event::EdgeRemoved { source, target, .. } => {
+                                    // Incremental -1: retract paths broken by edge removal
+                                    let current = frame.snapshot(Epoch(u64::MAX));
+                                    let deltas = crate::path_extender::retract_edge_removed(
+                                        frame.pattern(), graph,
+                                        &current, *source, *target,
+                                    );
+                                    for path in deltas.retracted_paths {
+                                        frame.apply_delta(path, epoch, Delta(-1));
+                                    }
+                                }
+                                Event::NodeRemoved { node_id } => {
+                                    // Incremental -1: retract paths containing removed node
+                                    let current = frame.snapshot(Epoch(u64::MAX));
+                                    let deltas = crate::path_extender::retract_node_removed(
+                                        &current, *node_id,
+                                    );
+                                    for path in deltas.retracted_paths {
+                                        frame.apply_delta(path, epoch, Delta(-1));
+                                    }
+                                }
+                                _ => {
+                                    // Fallback: full re-traverse for PropertyChanged and NodeAdded
+                                    frame.rematerialize(graph, epoch);
+                                }
                             }
                         }
                         let previous = prev_deltas.get(&fid).copied().unwrap_or(0);
@@ -2895,7 +2951,7 @@ mod tests {
         oracle_check(&mut engine, fid);
         assert_eq!(engine.query_frame(fid).unwrap().len(), 1, "Should have 1 path after EdgeAdded");
 
-        // Remove the edge -- falls back to full rematerialize (non-EdgeAdded event)
+        // Remove the edge -- uses incremental retraction via retract_edge_removed
         engine.ingest(Event::EdgeRemoved {
             edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2),
         });
