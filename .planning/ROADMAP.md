@@ -111,7 +111,10 @@ Plans:
   2. Paths that no longer satisfy filters after the property change are retracted as -1 deltas
   3. Paths that newly satisfy filters after the property change are asserted as +1 deltas
   4. Incremental property change handling produces identical frame state to full re-traverse baseline (oracle verified)
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 20-01-PLAN.md -- Add reevaluate_property_changed algorithm + unit tests to path_extender.rs
+- [ ] 20-02-PLAN.md -- Wire PropertyChanged into engine dispatch + oracle tests
 
 ### Phase 21: Performance and Benchmarks
 **Goal**: Incremental path extension is verified to be O(affected) for localized mutations, benchmarked against full re-traverse, and regression-free
@@ -149,5 +152,5 @@ Plans:
 | 17. Re-Diff Baseline | 1/1 | Complete    | 2026-02-26 | - |
 | 18. Incremental Edge Addition | 2/2 | Complete    | 2026-02-26 | - |
 | 19. Incremental Edge and Node Removal | 2/2 | Complete    | 2026-02-26 | - |
-| 20. Incremental Property Change | v3.0 | 0/? | Not started | - |
+| 20. Incremental Property Change | v3.0 | 0/2 | Planned | - |
 | 21. Performance and Benchmarks | v3.0 | 0/? | Not started | - |
