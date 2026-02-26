@@ -874,4 +874,279 @@ mod tests {
         assert_eq!(result.new_paths.len(), 1);
         assert_eq!(result.new_paths[0], vec![NodeId(1), NodeId(2)]);
     }
+
+    // ── Edge removal retraction tests ─────────────────────────────────
+
+    #[test]
+    fn test_retract_edge_removed_single_hop() {
+        // 1-hop frame (A->B). Remove edge A->B. Path [A, B] should be retracted.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        // Edge A->B is removed -- so NOT in the graph when we call retract.
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::None,
+        }];
+
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = retract_edge_removed(&pattern, &g, &path_refs, NodeId(1), NodeId(2));
+
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(result.retracted_paths[0], vec![NodeId(1), NodeId(2)]);
+    }
+
+    #[test]
+    fn test_retract_edge_removed_no_match() {
+        // 1-hop frame (A->B). Remove edge C->D (unrelated). No retraction.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        g.add_node(NodeId(3), TypeId(30));
+        g.add_node(NodeId(4), TypeId(40));
+        // Edge A->B still exists in the graph.
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::None,
+        }];
+
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        // Remove edge C->D (source=3, target=4) -- unrelated to path.
+        let result = retract_edge_removed(&pattern, &g, &path_refs, NodeId(3), NodeId(4));
+
+        assert!(result.retracted_paths.is_empty());
+    }
+
+    #[test]
+    fn test_retract_edge_removed_parallel_edge_survives() {
+        // Two outgoing edges from A to B (both matching hop type).
+        // Remove one. graph.neighbors(A, Outgoing, edge_type) still returns B
+        // via the surviving edge. Path should NOT be retracted.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        // Add two edges A->B with same type.
+        let eid1 = g.add_edge(NodeId(1), NodeId(2), TypeId(100)).unwrap();
+        let _eid2 = g.add_edge(NodeId(1), NodeId(2), TypeId(100)).unwrap();
+        // Remove one edge (simulate post-removal state).
+        g.remove_edge(eid1);
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::None,
+        }];
+
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = retract_edge_removed(&pattern, &g, &path_refs, NodeId(1), NodeId(2));
+
+        // Surviving parallel edge -- path NOT retracted.
+        assert!(result.retracted_paths.is_empty());
+    }
+
+    #[test]
+    fn test_retract_edge_removed_multi_hop_middle() {
+        // 3-hop frame (A->B->C->D). Remove edge B->C. Path retracted.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        g.add_node(NodeId(3), TypeId(30));
+        g.add_node(NodeId(4), TypeId(40));
+        // Edge A->B and C->D still exist; B->C removed.
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+        // B->C NOT in graph (removed).
+        g.add_edge(NodeId(3), NodeId(4), TypeId(300));
+
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(200)),
+                target_type: Some(TypeId(30)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(300)),
+                target_type: Some(TypeId(40)),
+                filter: Filter::None,
+            },
+        ];
+
+        let paths = vec![vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = retract_edge_removed(&pattern, &g, &path_refs, NodeId(2), NodeId(3));
+
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(
+            result.retracted_paths[0],
+            vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4)]
+        );
+    }
+
+    #[test]
+    fn test_retract_edge_removed_direction_incoming() {
+        // 1-hop frame with Direction::Incoming. Path is [B, A] meaning B has
+        // an incoming edge from A (edge A->B). Remove edge A->B (source=A,
+        // target=B). Incoming hop: from=B=removed_target, to=A=removed_source.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10)); // A
+        g.add_node(NodeId(2), TypeId(20)); // B
+        // Edge A->B removed -- NOT in graph.
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Incoming,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(10)),
+            filter: Filter::None,
+        }];
+
+        // Path [B, A]: anchor=B, follows incoming edge from A.
+        let paths = vec![vec![NodeId(2), NodeId(1)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        // Removed edge: source=A(1), target=B(2).
+        let result = retract_edge_removed(&pattern, &g, &path_refs, NodeId(1), NodeId(2));
+
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(result.retracted_paths[0], vec![NodeId(2), NodeId(1)]);
+    }
+
+    #[test]
+    fn test_retract_edge_removed_direction_any() {
+        // 1-hop frame with Direction::Any. Path [A, B]. Remove edge A->B.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        // Edge A->B removed -- NOT in graph.
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Any,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::None,
+        }];
+
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = retract_edge_removed(&pattern, &g, &path_refs, NodeId(1), NodeId(2));
+
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(result.retracted_paths[0], vec![NodeId(1), NodeId(2)]);
+    }
+
+    #[test]
+    fn test_retract_edge_removed_empty_paths() {
+        // Empty current_paths. No retraction.
+        let g = Graph::new();
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: None,
+            filter: Filter::None,
+        }];
+
+        let path_refs: Vec<&Vec<NodeId>> = Vec::new();
+
+        let result = retract_edge_removed(&pattern, &g, &path_refs, NodeId(1), NodeId(2));
+
+        assert!(result.retracted_paths.is_empty());
+    }
+
+    // ── Node removal retraction tests ─────────────────────────────────
+
+    #[test]
+    fn test_retract_node_removed_single_hop() {
+        // 1-hop frame (A->B). Remove node B. Path [A, B] retracted.
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = retract_node_removed(&path_refs, NodeId(2));
+
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(result.retracted_paths[0], vec![NodeId(1), NodeId(2)]);
+    }
+
+    #[test]
+    fn test_retract_node_removed_anchor() {
+        // 1-hop frame (A->B). Remove anchor node A. Path [A, B] retracted.
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = retract_node_removed(&path_refs, NodeId(1));
+
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(result.retracted_paths[0], vec![NodeId(1), NodeId(2)]);
+    }
+
+    #[test]
+    fn test_retract_node_removed_middle_of_multi_hop() {
+        // 3-hop path [A, B, C, D]. Remove node B. Path retracted.
+        let paths = vec![vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = retract_node_removed(&path_refs, NodeId(2));
+
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(
+            result.retracted_paths[0],
+            vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4)]
+        );
+    }
+
+    #[test]
+    fn test_retract_node_removed_no_match() {
+        // Path [A, B]. Remove node C (not in path). No retraction.
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = retract_node_removed(&path_refs, NodeId(3));
+
+        assert!(result.retracted_paths.is_empty());
+    }
+
+    #[test]
+    fn test_retract_node_removed_multiple_paths() {
+        // Two paths: [A, B] and [A, C]. Remove node B.
+        // Only [A, B] should be retracted.
+        let paths = vec![vec![NodeId(1), NodeId(2)], vec![NodeId(1), NodeId(3)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = retract_node_removed(&path_refs, NodeId(2));
+
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(result.retracted_paths[0], vec![NodeId(1), NodeId(2)]);
+    }
+
+    #[test]
+    fn test_retract_node_removed_empty_paths() {
+        // Empty current_paths. No retraction.
+        let path_refs: Vec<&Vec<NodeId>> = Vec::new();
+
+        let result = retract_node_removed(&path_refs, NodeId(1));
+
+        assert!(result.retracted_paths.is_empty());
+    }
 }
