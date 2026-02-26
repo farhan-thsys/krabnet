@@ -5,24 +5,24 @@
 See: .planning/PROJECT.md (updated 2026-02-25)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 14: Wire Post-Ingest Pipeline (gap closure)
+**Current focus:** Phase 15: Harden MCP Binary (final gap closure)
 **Milestone:** v2.0 Full Build Completion (67 requirements across 3 phases) + Gap Closure
 
 ## Current Position
 
-Phase: 14 of 15 (Wire Post-Ingest Pipeline)
-Plan: 1/1 — completed 14-01
-Status: Completed 14-01 (FrameUpdate broadcast + Tier3 dispatch wired into ingest_event) -- PHASE 14 COMPLETE
-Last activity: 2026-02-26 — Completed plan 14-01
+Phase: 15 of 15 (Harden MCP Binary)
+Plan: 1/1 — completed 15-01
+Status: Completed 15-01 (MCP binary + benchmarks hardened with Engine::with_config()) -- PHASE 15 COMPLETE
+Last activity: 2026-02-26 — Completed plan 15-01
 
-Progress: [██████████████] 100% (14-01 of 14 phases completed)
+Progress: [███████████████] 100% (15 of 15 phases completed)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 17
+- Total plans completed: 18
 - Average duration: 5 min
-- Total execution time: 1.57 hours
+- Total execution time: 1.64 hours
 
 **By Phase:**
 
@@ -41,9 +41,10 @@ Progress: [██████████████] 100% (14-01 of 14 phases 
 | 11 - Harden the Engine | 3 | 25 min | 8 min |
 | 12 - Production Interface | 4 | 23 min | 6 min |
 | 14 - Wire Post-Ingest Pipeline | 1 | 16 min | 16 min |
+| 15 - Harden MCP Binary | 1 | 4 min | 4 min |
 
 **Recent Trend:**
-- Last 5 plans: 10m, 13m, 0m, 4m, 6m
+- Last 5 plans: 13m, 0m, 4m, 6m, 4m
 - Trend: stable
 
 *Updated after each plan completion*
@@ -58,6 +59,7 @@ Progress: [██████████████] 100% (14-01 of 14 phases 
 | Phase 13 P02 | 10min | 3 tasks | 4 files |
 | Phase 13 P03 | 11min | 2 tasks | 8 files |
 | Phase 14 P01 | 16min | 2 tasks | 2 files |
+| Phase 15 P01 | 4min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -142,6 +144,9 @@ Recent decisions affecting current work:
 - [Phase 14-01]: Broadcast ALL registered frames on every ingest (subscriber-side filtering handles frame_id matching)
 - [Phase 14-01]: Tier 3 results verified via shared results_handle Arc<Mutex<Vec>> (avoids hang from delayed sender drop in tonic Arc wrapper)
 - [Phase 14-01]: Separate gRPC client connection for subscribe stream in test (avoids HTTP/2 stream interleaving)
+- [Phase 15-01]: MCP binary uses same hardening config as krabnet-server (10K compaction, 16 coalescing, 1000 fanout)
+- [Phase 15-01]: MCP unit tests left with Engine::new(64) -- they test protocol correctness, not engine hardening
+- [Phase 15-01]: Only setup_scale_engine() updated in benchmarks -- setup_engine() fine unhardened for basic benchmarks
 
 ### Pending Todos
 
@@ -154,5 +159,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 14-01-PLAN.md -- PHASE 14 COMPLETE
+Stopped at: Completed 15-01-PLAN.md -- PHASE 15 COMPLETE -- ALL PHASES DONE
 Resume file: None
