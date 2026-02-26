@@ -694,4 +694,163 @@ mod tests {
         // Shutdown server
         server_handle.abort();
     }
+
+    /// TEST-22: End-to-end ingest broadcast and Tier 3 dispatch.
+    ///
+    /// Verifies that after ingest_event(), SubscribeFrame clients receive
+    /// FrameUpdate messages and the Tier3Worker processes Tier2Results.
+    #[tokio::test]
+    async fn test_ingest_broadcasts_and_tier3() {
+        use crate::tier3::{MockLlmClient, Tier3Worker};
+        use std::time::Duration;
+
+        // 1. Create engine
+        let engine = Arc::new(RwLock::new(Engine::new(64)));
+
+        // 2. Create Tier 3 worker with mock LLM
+        let mock = MockLlmClient::new(vec!["test-analysis".to_string()]);
+        let (worker, tier3_sender) = Tier3Worker::new(Box::new(mock));
+        let tier3_results = worker.results_handle();
+
+        // 3. Spawn worker thread (processes Tier2Results until sender is dropped)
+        let worker_handle = std::thread::spawn(move || {
+            worker.run();
+        });
+
+        // 4. Create server with Tier3Sender (no WAL needed for test)
+        let server = KrabnetServer::with_tier3(Arc::clone(&engine), tier3_sender);
+
+        // 5. Start gRPC server on random port
+        let listener = tokio::net::TcpListener::bind("[::1]:0")
+            .await
+            .expect("failed to bind");
+        let addr = listener.local_addr().expect("no local addr");
+
+        let svc = server.into_service();
+        let server_handle = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(svc)
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(
+                    listener,
+                ))
+                .await
+                .expect("server error");
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // 6. Connect client for ingestion RPCs
+        let mut client =
+            KrabnetServiceClient::connect(format!("http://[::1]:{}", addr.port()))
+                .await
+                .expect("failed to connect");
+
+        // 7. Ingest nodes + edge to build graph
+        client
+            .ingest_event(IngestEventRequest {
+                event: Some(ingest_event_request::Event::NodeAdded(NodeAddedEvent {
+                    node_id: 1,
+                    type_id: 10,
+                })),
+            })
+            .await
+            .expect("ingest node 1 failed");
+
+        client
+            .ingest_event(IngestEventRequest {
+                event: Some(ingest_event_request::Event::NodeAdded(NodeAddedEvent {
+                    node_id: 2,
+                    type_id: 20,
+                })),
+            })
+            .await
+            .expect("ingest node 2 failed");
+
+        let edge_resp = client
+            .ingest_event(IngestEventRequest {
+                event: Some(ingest_event_request::Event::EdgeAdded(EdgeAddedEvent {
+                    edge_id: 0,
+                    source: 1,
+                    target: 2,
+                    type_id: 100,
+                })),
+            })
+            .await
+            .expect("ingest edge failed");
+        let reg_epoch = edge_resp.into_inner().epoch;
+
+        // 8. Register frame (1-hop outgoing from node 1)
+        let reg_resp = client
+            .register_frame(RegisterFrameRequest {
+                anchor_node_id: 1,
+                pattern: vec![proto::HopSpec {
+                    direction: Direction::Outgoing as i32,
+                    edge_type: Some(100),
+                    target_type: Some(20),
+                    filter: Some(proto::Filter {
+                        filter_type: Some(filter::FilterType::None(true)),
+                    }),
+                }],
+                epoch: reg_epoch,
+            })
+            .await
+            .expect("register frame failed");
+        let frame_id = reg_resp.into_inner().frame_id;
+
+        // 9. Subscribe to frame updates on a SEPARATE client connection.
+        //    This avoids HTTP/2 stream interleaving issues within a single
+        //    connection where the subscribe stream can block other RPCs.
+        let mut sub_client =
+            KrabnetServiceClient::connect(format!("http://[::1]:{}", addr.port()))
+                .await
+                .expect("failed to connect sub client");
+        let mut subscribe_stream = sub_client
+            .subscribe_frame(SubscribeFrameRequest { frame_id })
+            .await
+            .expect("subscribe frame failed")
+            .into_inner();
+
+        // Small delay to ensure subscription stream is fully established
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // 10. Ingest another event to trigger broadcast (frame exists now)
+        client
+            .ingest_event(IngestEventRequest {
+                event: Some(ingest_event_request::Event::NodeAdded(NodeAddedEvent {
+                    node_id: 3,
+                    type_id: 30,
+                })),
+            })
+            .await
+            .expect("ingest node 3 failed");
+
+        // 11. Wait for FrameUpdate on subscribe stream
+        let update = tokio::time::timeout(
+            Duration::from_secs(5),
+            subscribe_stream.message(),
+        )
+        .await
+        .expect("timeout waiting for FrameUpdate")
+        .expect("stream error")
+        .expect("stream ended");
+
+        assert_eq!(update.frame_id, frame_id);
+        assert!(!update.paths.is_empty(), "FrameUpdate should have paths");
+
+        // 12. Verify Tier 3 received and processed results.
+        //     The worker processes results in a background thread. Give it
+        //     a brief moment to consume from the channel, then check the
+        //     shared results handle directly (no need to join the worker).
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let results = tier3_results.lock().unwrap();
+        assert!(!results.is_empty(), "Tier 3 should have processed at least one result");
+        assert_eq!(results[0].frame_id, frame_id);
+        drop(results);
+
+        // 13. Shutdown server and worker
+        server_handle.abort();
+        // Worker thread will eventually exit when all senders are dropped;
+        // detach the handle rather than blocking on join.
+        drop(worker_handle);
+    }
 }
