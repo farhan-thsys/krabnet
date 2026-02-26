@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use krabnet::engine::Engine;
 use krabnet::grpc::KrabnetServer;
-use krabnet::tier3::{MockLlmClient, Tier3Worker};
+use krabnet::tier3::{AnthropicClient, MockLlmClient, Tier3Worker};
 use krabnet::wal::{WalReader, WalWriter};
 
 #[tokio::main]
@@ -50,9 +50,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wal_writer = WalWriter::new(wal_path, 1000)?;
     let wal_writer = Arc::new(Mutex::new(wal_writer));
 
-    // Set up Tier 3 worker (mock LLM client; swap for production client as needed)
-    let mock_client = MockLlmClient::new(vec![]);
-    let (tier3_worker, tier3_sender) = Tier3Worker::new(Box::new(mock_client));
+    // Set up Tier 3 worker: use AnthropicClient if API key is set, otherwise mock
+    let llm_client: Box<dyn krabnet::tier3::LlmClient> =
+        if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+            let model = std::env::var("KRABNET_LLM_MODEL")
+                .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+            let max_tokens: u32 = std::env::var("KRABNET_LLM_MAX_TOKENS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1024);
+            eprintln!(
+                "Tier 3: using AnthropicClient (model={}, max_tokens={})",
+                model, max_tokens
+            );
+            Box::new(AnthropicClient::new(api_key, model, max_tokens))
+        } else {
+            eprintln!("WARNING: ANTHROPIC_API_KEY not set, using MockLlmClient (Tier 3 will return mock analyses)");
+            Box::new(MockLlmClient::new(vec![]))
+        };
+    let (tier3_worker, tier3_sender) = Tier3Worker::new(llm_client);
 
     // Spawn Tier 3 worker in background thread
     let tier3_handle = std::thread::spawn(move || {

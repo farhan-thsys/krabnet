@@ -74,7 +74,7 @@ pub use ring_buffer::RingBuffer;
 pub use routing::InvertedIndex;
 pub use sequencer::EpochSequencer;
 pub use set_trie::SetTrie;
-pub use tier3::{LlmClient, MockLlmClient, Tier3Worker};
+pub use tier3::{AnthropicClient, LlmClient, MockLlmClient, Tier3Worker};
 pub use trunk::{TrunkInfo, detect_trunks};
 pub use types::*;
 pub use wal::{WalReader, WalWriter};
