@@ -859,8 +859,28 @@ impl Engine {
                                         frame.apply_delta(path, epoch, Delta(-1));
                                     }
                                 }
+                                Event::PropertyChanged { node_id, .. } => {
+                                    // Incremental +1/-1: reevaluate property filters
+                                    let current = frame.snapshot(Epoch(u64::MAX));
+                                    let current_refs: Vec<&Vec<NodeId>> = current.to_vec();
+                                    let deltas = crate::path_extender::reevaluate_property_changed(
+                                        frame.anchor(),
+                                        frame.pattern(),
+                                        graph,
+                                        &current_refs,
+                                        *node_id,
+                                    );
+                                    for path in deltas.retracted_paths {
+                                        frame.apply_delta(path, epoch, Delta(-1));
+                                    }
+                                    for path in deltas.new_paths {
+                                        frame.apply_delta(path, epoch, Delta(1));
+                                    }
+                                }
                                 _ => {
-                                    // Fallback: full re-traverse for PropertyChanged and NodeAdded
+                                    // Only NodeAdded remains -- nodes alone cannot create
+                                    // paths (edges do). All other event types are handled
+                                    // incrementally above.
                                     frame.rematerialize(graph, epoch);
                                 }
                             }
