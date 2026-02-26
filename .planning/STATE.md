@@ -10,19 +10,19 @@ See: .planning/PROJECT.md (updated 2026-02-26)
 
 ## Current Position
 
-Phase: 19 of 21 (Incremental Edge & Node Removal)
-Plan: 1 of 2 in current phase (Plan 01 COMPLETE)
-Status: Plan 01 complete -- retract_edge_removed and retract_node_removed algorithms implemented with 13 unit tests
-Last activity: 2026-02-26 -- Phase 19 Plan 01 retraction algorithms executed
+Phase: 19 of 21 (Incremental Edge & Node Removal) -- COMPLETE
+Plan: 2 of 2 in current phase (Plan 02 COMPLETE)
+Status: Phase 19 complete -- incremental removal dispatch wired into engine, 6 new oracle tests pass
+Last activity: 2026-02-26 -- Phase 19 Plan 02 engine integration executed
 
-Progress: [██████████████████░░] 86% (18/21 phases)
+Progress: [███████████████████░] 90% (19/21 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 23
+- Total plans completed: 24
 - Average duration: 6 min
-- Total execution time: 2.14 hours
+- Total execution time: 2.26 hours
 
 **By Phase:**
 
@@ -45,10 +45,10 @@ Progress: [██████████████████░░] 86% (18
 | 16 - Tech Debt Closure | 1 | 5 min | 5 min |
 | 17 - Re-Diff Baseline | 1 | 9 min | 9 min |
 | 18 - Incremental Edge Addition | 2 | 12 min | 6 min |
-| 19 - Incremental Edge & Node Removal | 1 | 4 min | 4 min |
+| 19 - Incremental Edge & Node Removal | 2 | 11 min | 6 min |
 
 **Recent Trend:**
-- Last 5 plans: 5m, 9m, 5m, 7m, 4m
+- Last 5 plans: 9m, 5m, 7m, 4m, 7m
 - Trend: stable
 
 ## Accumulated Context
@@ -74,6 +74,9 @@ Recent decisions affecting current work:
 - v3.0: Parallel edge survival uses graph.neighbors() on post-removal state -- implicitly validates edge type via hop constraint
 - v3.0: Edge removal deduplicates via HashSet; node removal skips dedup since snapshot refs are unique
 - v3.0: retract_edge_removed takes pattern+graph for hop-aware checking; retract_node_removed needs only paths+node
+- v3.0: force_rematerialize parameter on maintain_and_evaluate_frames bypasses event dispatch -- cleaner than sentinel event tricks
+- v3.0: DeletionContext captured before graph.remove_node() for future extensibility (current algorithm uses path scanning)
+- v3.0: Coalescer uses force_rematerialize=true instead of NodeRemoved sentinel to avoid triggering incremental retraction
 
 ### Pending Todos
 
@@ -88,5 +91,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 19-01-PLAN.md -- retract_edge_removed and retract_node_removed algorithms with 13 unit tests
+Stopped at: Completed 19-02-PLAN.md -- incremental removal dispatch wired into engine with 6 new oracle tests (Phase 19 COMPLETE)
 Resume file: None

@@ -35,13 +35,13 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 
 - [x] **IREM-01**: EdgeRemoved events identify all materialized paths that traverse the removed edge
 - [x] **IREM-02**: Affected paths retracted as -1 deltas via Frame::apply_delta without full DFS re-traverse
-- [ ] **IREM-03**: Incremental EdgeRemoved produces identical frame state to full re-traverse (oracle verified)
+- [x] **IREM-03**: Incremental EdgeRemoved produces identical frame state to full re-traverse (oracle verified)
 
 ### Incremental Node Removal
 
-- [ ] **NDEL-01**: NodeRemoved events capture edge information before graph mutation destroys adjacency (DeletionContext)
+- [x] **NDEL-01**: NodeRemoved events capture edge information before graph mutation destroys adjacency (DeletionContext)
 - [x] **NDEL-02**: All paths traversing the removed node retracted as -1 deltas
-- [ ] **NDEL-03**: Incremental NodeRemoved produces identical frame state to full re-traverse (oracle verified)
+- [x] **NDEL-03**: Incremental NodeRemoved produces identical frame state to full re-traverse (oracle verified)
 
 ### Incremental Property Change
 
@@ -103,10 +103,10 @@ Deferred to future release. Tracked but not in current roadmap.
 | IADD-05 | Phase 18 | Complete |
 | IREM-01 | Phase 19 | Complete |
 | IREM-02 | Phase 19 | Complete |
-| IREM-03 | Phase 19 | Pending |
-| NDEL-01 | Phase 19 | Pending |
+| IREM-03 | Phase 19 | Complete |
+| NDEL-01 | Phase 19 | Complete |
 | NDEL-02 | Phase 19 | Complete |
-| NDEL-03 | Phase 19 | Pending |
+| NDEL-03 | Phase 19 | Complete |
 | PROP-01 | Phase 20 | Pending |
 | PROP-02 | Phase 20 | Pending |
 | PROP-03 | Phase 20 | Pending |

@@ -42,7 +42,7 @@
 - [x] **Phase 16: Tech Debt Closure** — Commit and verify already-built AnthropicClient, CompactionStats, and MCP WAL code (completed 2026-02-26)
 - [x] **Phase 17: Re-Diff Baseline** — Wire frame maintenance into the ingest pipeline with full re-traverse + diff correctness oracle (completed 2026-02-26)
 - [x] **Phase 18: Incremental Edge Addition** — PathExtender module with per-hop delta derivation for EdgeAdded events (completed 2026-02-26)
-- [ ] **Phase 19: Incremental Edge and Node Removal** — Targeted path retraction for EdgeRemoved and NodeRemoved events
+- [x] **Phase 19: Incremental Edge and Node Removal** — Targeted path retraction for EdgeRemoved and NodeRemoved events (completed 2026-02-26)
 - [ ] **Phase 20: Incremental Property Change** — Filter re-evaluation for PropertyChanged events producing path assertions and retractions
 - [ ] **Phase 21: Performance and Benchmarks** — Verify O(affected) scaling, Criterion benchmarks, stress test, regression gate
 
@@ -97,7 +97,7 @@ Plans:
   2. NodeRemoved events capture edge adjacency via DeletionContext before graph mutation, then retract all paths through the removed node
   3. No ghost paths remain after any deletion event (oracle verified against full re-traverse for diamond graphs, multi-frame deletions, and cascade scenarios)
   4. Incremental removal produces identical frame state to full re-traverse baseline (oracle verified)
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [ ] 19-01-PLAN.md — Add retract_edge_removed and retract_node_removed to path_extender module with unit tests
 - [ ] 19-02-PLAN.md — Wire incremental removal dispatch into engine, DeletionContext, coalescer fix, oracle tests
@@ -148,6 +148,6 @@ Plans:
 | 16. Tech Debt Closure | 1/1 | Complete    | 2026-02-26 | - |
 | 17. Re-Diff Baseline | 1/1 | Complete    | 2026-02-26 | - |
 | 18. Incremental Edge Addition | 2/2 | Complete    | 2026-02-26 | - |
-| 19. Incremental Edge and Node Removal | 1/2 | In Progress|  | - |
+| 19. Incremental Edge and Node Removal | 2/2 | Complete   | 2026-02-26 | - |
 | 20. Incremental Property Change | v3.0 | 0/? | Not started | - |
 | 21. Performance and Benchmarks | v3.0 | 0/? | Not started | - |
