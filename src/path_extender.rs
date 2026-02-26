@@ -1,4 +1,15 @@
-//! Incremental path extension for EdgeAdded events.
+//! Incremental path extension and retraction for edge/node mutations.
+//!
+//! This module provides the algorithmic core for incremental path maintenance:
+//!
+//! - **[`extend_edge_added`]**: Computes new complete paths produced by a newly
+//!   added edge without full DFS re-traverse.
+//! - **[`retract_edge_removed`]**: Identifies materialized paths broken by a
+//!   removed edge, with parallel-edge survival checks to avoid over-retraction.
+//! - **[`retract_node_removed`]**: Identifies materialized paths containing a
+//!   removed node at any position.
+//!
+//! ## Edge-Added Extension
 //!
 //! Given a frame's anchor and hop pattern, computes new complete paths
 //! produced by a newly added edge without full DFS re-traverse. The algorithm
@@ -11,7 +22,20 @@
 //! 3. **Forward extension**: Continue DFS from the reached node through remaining
 //!    hops K+1..N-1 to produce complete paths.
 //!
-//! The function is stateless: it takes read-only references to the graph and
+//! ## Edge-Removed Retraction
+//!
+//! Scans a frame's materialized paths to find those traversing the removed edge
+//! at any hop position. For each matched hop, a parallel-edge survival check
+//! queries [`Graph::neighbors`] on the post-removal graph state: if another edge
+//! still connects the same (from, to) pair with the correct direction and type,
+//! the path survives. Only paths with no surviving parallel edge are retracted.
+//!
+//! ## Node-Removed Retraction
+//!
+//! Scans materialized paths for the removed node's presence at any position
+//! (anchor, intermediate, or terminal). All matching paths are retracted.
+//!
+//! All functions are stateless: they take read-only references to the graph and
 //! pattern, returning path deltas that the engine applies via [`crate::Frame::apply_delta`].
 //!
 //! # Correctness
@@ -120,6 +144,157 @@ pub fn extend_edge_added(
     EdgeAddedDeltas {
         new_paths: all_paths,
     }
+}
+
+/// Result of incremental edge-removed retraction.
+///
+/// Contains the materialized paths that should be retracted as -1 deltas
+/// from the affected frame's [`crate::diff::DiffCollection`] because they
+/// traversed the removed edge and no parallel edge survives.
+#[derive(Debug)]
+pub struct EdgeRemovedDeltas {
+    /// Paths to retract as -1 deltas.
+    pub retracted_paths: Vec<Vec<NodeId>>,
+}
+
+/// Result of incremental node-removed retraction.
+///
+/// Contains the materialized paths that should be retracted as -1 deltas
+/// from the affected frame's [`crate::diff::DiffCollection`] because they
+/// contain the removed node at some position.
+#[derive(Debug)]
+pub struct NodeRemovedDeltas {
+    /// Paths to retract as -1 deltas.
+    pub retracted_paths: Vec<Vec<NodeId>>,
+}
+
+/// Identifies materialized paths broken by a removed edge.
+///
+/// For each path in `current_paths`, checks whether any hop traverses the
+/// removed edge (source, target). If a hop matches, performs a parallel-edge
+/// survival check via [`Graph::neighbors`] on the post-removal graph state.
+/// Only paths with no surviving parallel edge are retracted.
+///
+/// Paths are deduplicated to prevent double-retraction.
+///
+/// # Arguments
+///
+/// * `pattern` - The frame's hop pattern (sequence of [`HopSpec`]).
+/// * `graph` - The current graph state (edge already removed).
+/// * `current_paths` - References to the frame's currently materialized paths.
+/// * `source` - Source node of the removed edge.
+/// * `target` - Target node of the removed edge.
+///
+/// # Returns
+///
+/// [`EdgeRemovedDeltas`] containing deduplicated retracted paths.
+pub fn retract_edge_removed(
+    pattern: &[HopSpec],
+    graph: &Graph,
+    current_paths: &[&Vec<NodeId>],
+    source: NodeId,
+    target: NodeId,
+) -> EdgeRemovedDeltas {
+    if pattern.is_empty() || current_paths.is_empty() {
+        return EdgeRemovedDeltas {
+            retracted_paths: Vec::new(),
+        };
+    }
+
+    let mut retracted_paths: Vec<Vec<NodeId>> = Vec::new();
+
+    for path in current_paths {
+        if path_broken_by_edge_removal(path, pattern, graph, source, target) {
+            retracted_paths.push(path.to_vec());
+        }
+    }
+
+    // Deduplicate via HashSet to prevent double-retraction.
+    let mut seen = HashSet::new();
+    retracted_paths.retain(|p| seen.insert(p.clone()));
+
+    EdgeRemovedDeltas { retracted_paths }
+}
+
+/// Checks whether a path is broken by the removal of edge (removed_source, removed_target).
+///
+/// For each hop in the pattern, determines the (from, to) nodes in the path and
+/// checks whether the removed edge matches this hop based on direction. If matched,
+/// performs a parallel-edge survival check: queries `graph.neighbors()` to see if
+/// any remaining edge still connects from -> to with the hop's direction and type.
+///
+/// Returns `true` if the path is broken (should be retracted).
+fn path_broken_by_edge_removal(
+    path: &[NodeId],
+    pattern: &[HopSpec],
+    graph: &Graph,
+    removed_source: NodeId,
+    removed_target: NodeId,
+) -> bool {
+    // Guard: invalid path length.
+    if path.len() != pattern.len() + 1 {
+        return false;
+    }
+
+    for (hop_idx, hop) in pattern.iter().enumerate() {
+        let from = path[hop_idx];
+        let to = path[hop_idx + 1];
+
+        // Check if the removed edge matches this hop based on direction.
+        let matches = match hop.direction {
+            Direction::Outgoing => from == removed_source && to == removed_target,
+            Direction::Incoming => from == removed_target && to == removed_source,
+            Direction::Any => {
+                (from == removed_source && to == removed_target)
+                    || (from == removed_target && to == removed_source)
+            }
+        };
+
+        if matches {
+            // Parallel edge survival check: does any remaining neighbor still
+            // connect from -> to with the hop's direction and edge_type?
+            let neighbors = graph.neighbors(from, hop.direction, hop.edge_type);
+            let surviving = neighbors.iter().any(|(_eid, n)| *n == to);
+
+            if !surviving {
+                // No parallel edge survives -- path is broken.
+                return true;
+            }
+            // A parallel edge survives for this hop, continue checking remaining hops.
+        }
+    }
+
+    false
+}
+
+/// Identifies materialized paths containing a removed node.
+///
+/// Scans each path in `current_paths` for the presence of `removed_node`
+/// at any position (anchor, intermediate, or terminal). All matching paths
+/// are collected and returned for retraction as -1 deltas.
+///
+/// No deduplication is needed: each path reference in `current_paths` is
+/// unique (from [`crate::Frame::snapshot`] which returns `&Vec<NodeId>` refs).
+///
+/// # Arguments
+///
+/// * `current_paths` - References to the frame's currently materialized paths.
+/// * `removed_node` - The node that was removed from the graph.
+///
+/// # Returns
+///
+/// [`NodeRemovedDeltas`] containing retracted paths.
+pub fn retract_node_removed(
+    current_paths: &[&Vec<NodeId>],
+    removed_node: NodeId,
+) -> NodeRemovedDeltas {
+    let retracted_paths: Vec<Vec<NodeId>> = current_paths
+        .iter()
+        .filter(|path| path.contains(&removed_node))
+        .map(|path| path.to_vec())
+        .collect();
+
+    NodeRemovedDeltas { retracted_paths }
 }
 
 /// Checks if a new edge could satisfy the given hop specification for
