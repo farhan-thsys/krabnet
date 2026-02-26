@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::broadcast;
 use tonic::{Request, Response, Status};
 
+use crate::tier3::{Tier2Result, Tier3Sender};
 use crate::wal::WalWriter;
 
 /// Include generated protobuf types.
@@ -52,6 +53,9 @@ pub struct KrabnetServer {
     /// Optional WAL writer for durable event persistence.
     /// When set, every `IngestEvent` RPC appends to the WAL before responding.
     wal_writer: Option<Arc<Mutex<WalWriter>>>,
+    /// Optional Tier 3 sender for dispatching Tier 2 results to the LLM worker.
+    /// When set, every `IngestEvent` RPC dispatches results via non-blocking `try_send`.
+    tier3_sender: Option<Tier3Sender>,
 }
 
 impl KrabnetServer {
@@ -62,6 +66,7 @@ impl KrabnetServer {
             engine,
             frame_tx,
             wal_writer: None,
+            tier3_sender: None,
         }
     }
 
@@ -77,6 +82,40 @@ impl KrabnetServer {
             engine,
             frame_tx,
             wal_writer: Some(wal_writer),
+            tier3_sender: None,
+        }
+    }
+
+    /// Create a new KrabnetServer with WAL persistence and Tier 3 dispatch.
+    ///
+    /// Combines WAL durability with Tier 3 LLM worker integration. Every
+    /// `IngestEvent` RPC appends to the WAL and dispatches `Tier2Result`s
+    /// to the Tier 3 worker via non-blocking `try_send`.
+    pub fn with_wal_and_tier3(
+        engine: Arc<RwLock<Engine>>,
+        wal_writer: Arc<Mutex<WalWriter>>,
+        tier3_sender: Tier3Sender,
+    ) -> Self {
+        let (frame_tx, _) = broadcast::channel(1024);
+        Self {
+            engine,
+            frame_tx,
+            wal_writer: Some(wal_writer),
+            tier3_sender: Some(tier3_sender),
+        }
+    }
+
+    /// Create a new KrabnetServer with Tier 3 dispatch but no WAL.
+    ///
+    /// Used primarily in tests where WAL persistence is not needed but
+    /// Tier 3 integration must be verified.
+    pub fn with_tier3(engine: Arc<RwLock<Engine>>, tier3_sender: Tier3Sender) -> Self {
+        let (frame_tx, _) = broadcast::channel(1024);
+        Self {
+            engine,
+            frame_tx,
+            wal_writer: None,
+            tier3_sender: Some(tier3_sender),
         }
     }
 
@@ -266,6 +305,42 @@ impl KrabnetService for KrabnetServer {
             writer
                 .append(epoch, &event)
                 .map_err(|e| Status::internal(format!("WAL write failed: {}", e)))?;
+        }
+
+        // Post-ingest: broadcast FrameUpdates and dispatch Tier 3 results
+        {
+            let mut engine = self
+                .engine
+                .write()
+                .map_err(|_| Status::internal("engine lock poisoned"))?;
+            let frames = engine.list_frames();
+            for (fid, anchor, _tier, _tuple_count) in &frames {
+                if let Some(paths) = engine.query_frame(*fid) {
+                    // Broadcast FrameUpdate for SubscribeFrame clients (GRPC-03)
+                    let update = proto::FrameUpdate {
+                        frame_id: *fid,
+                        paths: paths_to_proto(&paths),
+                        epoch: epoch.0,
+                    };
+                    let _ = self.frame_tx.send(update);
+
+                    // Dispatch Tier 2 result to Tier 3 worker (TIER3-01..04)
+                    if let Some(ref sender) = self.tier3_sender {
+                        let path_count = paths.len();
+                        let result = Tier2Result {
+                            frame_id: *fid,
+                            anchor: *anchor,
+                            paths,
+                            epoch,
+                            tier2_summary: format!(
+                                "{} paths materialized",
+                                path_count
+                            ),
+                        };
+                        let _ = sender.try_send(result);
+                    }
+                }
+            }
         }
 
         Ok(Response::new(IngestEventResponse { epoch: epoch.0 }))

@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set up Tier 3 worker (mock LLM client; swap for production client as needed)
     let mock_client = MockLlmClient::new(vec![]);
-    let (tier3_worker, _tier3_sender) = Tier3Worker::new(Box::new(mock_client));
+    let (tier3_worker, tier3_sender) = Tier3Worker::new(Box::new(mock_client));
 
     // Spawn Tier 3 worker in background thread
     let tier3_handle = std::thread::spawn(move || {
@@ -61,7 +61,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wrap engine for gRPC server, passing WAL writer for live persistence
     let engine = Arc::new(RwLock::new(engine));
-    let grpc_server = KrabnetServer::with_wal(Arc::clone(&engine), Arc::clone(&wal_writer));
+    let grpc_server = KrabnetServer::with_wal_and_tier3(
+        Arc::clone(&engine),
+        Arc::clone(&wal_writer),
+        tier3_sender,
+    );
 
     let addr = "[::1]:50051".parse()?;
     eprintln!("krabnet-server listening on {}", addr);
