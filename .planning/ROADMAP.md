@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 11: Harden the Engine** - Background compaction, multi-threaded frame eval, mutation coalescing, fan-out limits, hysteresis, stress tests (completed 2026-02-24)
 - [x] **Phase 12: Production Interface** - gRPC server (8 RPCs), MCP server (5 tools), Tier 3 LLM, WAL persistence, binary entry points (completed 2026-02-24)
 - [x] **Phase 13: Scale and Optimize** - Set-Trie inverted index, Count-Min Sketch, trunk/leaf detection, buffer pool, learned template weighting, enterprise benchmarks (completed 2026-02-24)
-- [ ] **Phase 14: Wire Post-Ingest Broadcast and Tier 3 Pipeline** - Connect SubscribeFrame broadcast and Tier 3 LLM pipeline to live ingest path (Gap Closure)
+- [x] **Phase 14: Wire Post-Ingest Broadcast and Tier 3 Pipeline** - Connect SubscribeFrame broadcast and Tier 3 LLM pipeline to live ingest path (Gap Closure) (completed 2026-02-26)
 - [ ] **Phase 15: Harden MCP Binary** - Apply Phase 11 hardening to MCP binary, fix benchmark config (Gap Closure)
 
 ## Phase Details
@@ -144,5 +144,5 @@ v2.0: 11 → 12 → 13 → 14 → 15
 | 11. Harden the Engine | 3/3 | Complete    | 2026-02-24 |
 | 12. Production Interface | 4/4 | Complete    | 2026-02-24 |
 | 13. Scale and Optimize | 3/3 | Complete    | 2026-02-24 |
-| 14. Wire Post-Ingest Pipeline | 0/0 | Not Started | — |
+| 14. Wire Post-Ingest Pipeline | 1/1 | Complete   | 2026-02-26 |
 | 15. Harden MCP Binary | 0/0 | Not Started | — |

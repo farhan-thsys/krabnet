@@ -5,24 +5,24 @@
 See: .planning/PROJECT.md (updated 2026-02-25)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 13: Scale and Optimize
-**Milestone:** v2.0 Full Build Completion (67 requirements across 3 phases)
+**Current focus:** Phase 14: Wire Post-Ingest Pipeline (gap closure)
+**Milestone:** v2.0 Full Build Completion (67 requirements across 3 phases) + Gap Closure
 
 ## Current Position
 
-Phase: 13 of 13 (Scale and Optimize)
-Plan: 3/3 — completed 13-03
-Status: Completed 13-03 (Learned Template Weighting + Enterprise Benchmarks + README + Quality Gates)
-Last activity: 2026-02-25 — Completed plan 13-03 -- PHASE 13 COMPLETE -- ALL PHASES COMPLETE
+Phase: 14 of 15 (Wire Post-Ingest Pipeline)
+Plan: 1/1 — completed 14-01
+Status: Completed 14-01 (FrameUpdate broadcast + Tier3 dispatch wired into ingest_event) -- PHASE 14 COMPLETE
+Last activity: 2026-02-26 — Completed plan 14-01
 
-Progress: [██████████████] 100% (13-03 of 13 phases)
+Progress: [██████████████] 100% (14-01 of 14 phases completed)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 16
+- Total plans completed: 17
 - Average duration: 5 min
-- Total execution time: 1.30 hours
+- Total execution time: 1.57 hours
 
 **By Phase:**
 
@@ -40,6 +40,7 @@ Progress: [██████████████] 100% (13-03 of 13 phases)
 | 10 - Benchmarks & Quality | 1 | 4 min | 4 min |
 | 11 - Harden the Engine | 3 | 25 min | 8 min |
 | 12 - Production Interface | 4 | 23 min | 6 min |
+| 14 - Wire Post-Ingest Pipeline | 1 | 16 min | 16 min |
 
 **Recent Trend:**
 - Last 5 plans: 10m, 13m, 0m, 4m, 6m
@@ -56,6 +57,7 @@ Progress: [██████████████] 100% (13-03 of 13 phases)
 | Phase 13 P01 | 9min | 2 tasks | 6 files |
 | Phase 13 P02 | 10min | 3 tasks | 4 files |
 | Phase 13 P03 | 11min | 2 tasks | 8 files |
+| Phase 14 P01 | 16min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -137,6 +139,9 @@ Recent decisions affecting current work:
 - [Phase 13-03]: Deactivation threshold: success_ratio < 0.1 after 50+ total attempts
 - [Phase 13-03]: Template sorting by success_ratio descending in observe_edge for priority scanning
 - [Phase 13-03]: setup_scale_engine creates 100K node / 1M edge shared engine for BENCH-04 and BENCH-05
+- [Phase 14-01]: Broadcast ALL registered frames on every ingest (subscriber-side filtering handles frame_id matching)
+- [Phase 14-01]: Tier 3 results verified via shared results_handle Arc<Mutex<Vec>> (avoids hang from delayed sender drop in tonic Arc wrapper)
+- [Phase 14-01]: Separate gRPC client connection for subscribe stream in test (avoids HTTP/2 stream interleaving)
 
 ### Pending Todos
 
@@ -148,6 +153,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-25
-Stopped at: Completed 13-03-PLAN.md -- ALL PHASES COMPLETE
+Last session: 2026-02-26
+Stopped at: Completed 14-01-PLAN.md -- PHASE 14 COMPLETE
 Resume file: None
