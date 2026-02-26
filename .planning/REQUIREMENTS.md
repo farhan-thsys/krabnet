@@ -1,0 +1,127 @@
+# Requirements: Krabnet v3.0
+
+**Defined:** 2026-02-26
+**Core Value:** When a signal arrives, decision-relevant context is already materialized — zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
+
+## v3.0 Requirements
+
+Requirements for v3.0 milestone. Each maps to roadmap phases.
+
+### Tech Debt Closure
+
+- [ ] **DEBT-01**: AnthropicClient implements LlmClient trait using ureq HTTP for real Tier 3 LLM interpretation
+- [ ] **DEBT-02**: krabnet-server auto-detects ANTHROPIC_API_KEY env var and uses AnthropicClient when available, falls back to MockLlmClient with warning
+- [ ] **DEBT-03**: CompactionStats exposed via gRPC GetStats response (compactions_completed, tuples_before, tuples_after, total_compaction_time_us)
+- [ ] **DEBT-04**: CompactionStats exposed via MCP krabnet_stats tool response
+- [ ] **DEBT-05**: MCP binary supports WAL persistence with crash recovery replay on startup
+- [ ] **DEBT-06**: MCP binary persists ingest events to WAL during live operation
+- [ ] **DEBT-07**: AnthropicClient exported from lib.rs public API
+
+### Re-Diff Baseline
+
+- [ ] **RDIF-01**: Engine ingest pipeline wires frame state maintenance after initial materialization (frames update on every routed event, not just at registration)
+- [ ] **RDIF-02**: Frame maintenance produces correct differential state matching what full DFS re-materialization would produce at every epoch
+- [ ] **RDIF-03**: Correctness oracle test harness compares incremental result against full re-traverse for every frame update and asserts exact match
+
+### Incremental Edge Addition
+
+- [ ] **IADD-01**: EdgeAdded events trigger per-hop delta derivation identifying which hop in each affected frame the new edge satisfies
+- [ ] **IADD-02**: Backward prefix resolution finds existing paths from anchor to the hop before the affected edge
+- [ ] **IADD-03**: Forward path extension traverses from the new edge through remaining hops to produce complete new paths
+- [ ] **IADD-04**: New paths asserted as +1 deltas via Frame::apply_delta without full DFS re-traverse
+- [ ] **IADD-05**: Incremental EdgeAdded produces identical frame state to full re-traverse (oracle verified)
+
+### Incremental Edge Removal
+
+- [ ] **IREM-01**: EdgeRemoved events identify all materialized paths that traverse the removed edge
+- [ ] **IREM-02**: Affected paths retracted as -1 deltas via Frame::apply_delta without full DFS re-traverse
+- [ ] **IREM-03**: Incremental EdgeRemoved produces identical frame state to full re-traverse (oracle verified)
+
+### Incremental Node Removal
+
+- [ ] **NDEL-01**: NodeRemoved events capture edge information before graph mutation destroys adjacency (DeletionContext)
+- [ ] **NDEL-02**: All paths traversing the removed node retracted as -1 deltas
+- [ ] **NDEL-03**: Incremental NodeRemoved produces identical frame state to full re-traverse (oracle verified)
+
+### Incremental Property Change
+
+- [ ] **PROP-01**: PropertyChanged events re-evaluate hop filters for all frames containing the affected node
+- [ ] **PROP-02**: Paths that no longer satisfy filters retracted as -1 deltas
+- [ ] **PROP-03**: Paths that newly satisfy filters asserted as +1 deltas
+- [ ] **PROP-04**: Incremental PropertyChanged produces identical frame state to full re-traverse (oracle verified)
+
+### Performance and Optimization
+
+- [ ] **PERF-01**: Incremental extension cost is O(affected_paths) not O(full_DFS) for localized mutations
+- [ ] **PERF-02**: Criterion benchmark comparing incremental vs full re-traverse latency for EdgeAdded on multi-hop frames
+- [ ] **PERF-03**: Criterion benchmark for incremental EdgeRemoved latency
+- [ ] **PERF-04**: Stress test validating incremental correctness under sustained 50K+ events/sec
+- [ ] **PERF-05**: All existing 180 lib tests and 54 doc-tests continue to pass (no regressions)
+
+## v4 Requirements
+
+Deferred to future release. Tracked but not in current roadmap.
+
+### Advanced Optimization
+
+- **OPT-01**: PathPositionIndex for O(1) hop-position lookups (add if benchmarks show backward prefix resolution is bottleneck)
+- **OPT-02**: Partial path cache for frequently accessed backward prefixes (RETE-style)
+- **OPT-03**: Batch delta derivation API for apply_delta to avoid repeated aggregate_net_delta() calls
+
+### Scale Targets
+
+- **SCALE-01**: 1M nodes, 10M edges, 500K events/sec sustained
+- **SCALE-02**: Sub-microsecond event ingestion p99
+
+## Out of Scope
+
+| Feature | Reason |
+|---------|--------|
+| Distributed incremental maintenance | Single-process architecture; distributed is different problem |
+| Lazy/pull-based evaluation | Krabnet is eager/push-based by design |
+| Query language for incremental views | Runtime only, not query UX |
+| Async incremental pipeline | Synchronous delta propagation preserves epoch ordering guarantees |
+
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| DEBT-01 | Phase 16 | Pending |
+| DEBT-02 | Phase 16 | Pending |
+| DEBT-03 | Phase 16 | Pending |
+| DEBT-04 | Phase 16 | Pending |
+| DEBT-05 | Phase 16 | Pending |
+| DEBT-06 | Phase 16 | Pending |
+| DEBT-07 | Phase 16 | Pending |
+| RDIF-01 | Phase 17 | Pending |
+| RDIF-02 | Phase 17 | Pending |
+| RDIF-03 | Phase 17 | Pending |
+| IADD-01 | Phase 18 | Pending |
+| IADD-02 | Phase 18 | Pending |
+| IADD-03 | Phase 18 | Pending |
+| IADD-04 | Phase 18 | Pending |
+| IADD-05 | Phase 18 | Pending |
+| IREM-01 | Phase 19 | Pending |
+| IREM-02 | Phase 19 | Pending |
+| IREM-03 | Phase 19 | Pending |
+| NDEL-01 | Phase 19 | Pending |
+| NDEL-02 | Phase 19 | Pending |
+| NDEL-03 | Phase 19 | Pending |
+| PROP-01 | Phase 20 | Pending |
+| PROP-02 | Phase 20 | Pending |
+| PROP-03 | Phase 20 | Pending |
+| PROP-04 | Phase 20 | Pending |
+| PERF-01 | Phase 21 | Pending |
+| PERF-02 | Phase 21 | Pending |
+| PERF-03 | Phase 21 | Pending |
+| PERF-04 | Phase 21 | Pending |
+| PERF-05 | Phase 21 | Pending |
+
+**Coverage:**
+- v3.0 requirements: 30 total
+- Mapped to phases: 30
+- Unmapped: 0 ✓
+
+---
+*Requirements defined: 2026-02-26*
+*Last updated: 2026-02-26 after initial definition*
