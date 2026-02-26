@@ -492,15 +492,15 @@ impl KrabnetService for KrabnetServer {
         &self,
         _request: Request<GetStatsRequest>,
     ) -> Result<Response<GetStatsResponse>, Status> {
-        let stats = {
+        let (stats, compaction) = {
             let engine = self
                 .engine
                 .read()
                 .map_err(|_| Status::internal("engine lock poisoned"))?;
-            engine.stats()
+            (engine.stats(), engine.compaction_stats())
         };
 
-        Ok(Response::new(GetStatsResponse {
+        let mut resp = GetStatsResponse {
             node_count: stats.node_count as u64,
             edge_count: stats.edge_count as u64,
             frame_count: stats.frame_count as u64,
@@ -510,7 +510,20 @@ impl KrabnetService for KrabnetServer {
             total_tuples: stats.total_tuples as u64,
             embryonic_candidates: stats.embryonic_candidates as u64,
             embryonic_templates: stats.embryonic_templates as u64,
-        }))
+            compactions_completed: None,
+            compaction_tuples_before: None,
+            compaction_tuples_after: None,
+            total_compaction_time_us: None,
+        };
+
+        if let Some(cs) = compaction {
+            resp.compactions_completed = Some(cs.compactions_completed);
+            resp.compaction_tuples_before = Some(cs.tuples_before);
+            resp.compaction_tuples_after = Some(cs.tuples_after);
+            resp.total_compaction_time_us = Some(cs.total_compaction_time_us);
+        }
+
+        Ok(Response::new(resp))
     }
 }
 
@@ -692,6 +705,74 @@ mod tests {
         assert_eq!(stats2.embryonic_templates, 1);
 
         // Shutdown server
+        server_handle.abort();
+    }
+
+    /// DEBT-03: gRPC GetStats includes compaction metrics when compaction worker is configured.
+    ///
+    /// Creates an engine with compaction enabled, starts a gRPC server,
+    /// calls GetStats, and verifies that all 4 compaction fields are present
+    /// with initial zero values.
+    #[tokio::test]
+    async fn test_grpc_stats_include_compaction_fields() {
+        // Engine with compaction enabled (threshold: 10,000 tuples)
+        let engine = Arc::new(RwLock::new(Engine::with_config(64, Some(10_000), None, None)));
+        let server = KrabnetServer::new(Arc::clone(&engine));
+
+        // Start server on random port
+        let listener = tokio::net::TcpListener::bind("[::1]:0")
+            .await
+            .expect("failed to bind");
+        let addr = listener.local_addr().expect("no local addr");
+
+        let svc = server.into_service();
+        let server_handle = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(svc)
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(
+                    listener,
+                ))
+                .await
+                .expect("server error");
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Connect client
+        let mut client =
+            KrabnetServiceClient::connect(format!("http://[::1]:{}", addr.port()))
+                .await
+                .expect("failed to connect");
+
+        // Call GetStats
+        let stats = client
+            .get_stats(GetStatsRequest {})
+            .await
+            .expect("get stats failed")
+            .into_inner();
+
+        // Verify compaction fields are present with initial zero values
+        assert_eq!(
+            stats.compactions_completed,
+            Some(0),
+            "compactions_completed should be Some(0) for fresh engine with compaction enabled"
+        );
+        assert_eq!(
+            stats.compaction_tuples_before,
+            Some(0),
+            "compaction_tuples_before should be Some(0)"
+        );
+        assert_eq!(
+            stats.compaction_tuples_after,
+            Some(0),
+            "compaction_tuples_after should be Some(0)"
+        );
+        assert_eq!(
+            stats.total_compaction_time_us,
+            Some(0),
+            "total_compaction_time_us should be Some(0)"
+        );
+
         server_handle.abort();
     }
 

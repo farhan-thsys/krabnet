@@ -112,6 +112,88 @@ impl LlmClient for MockLlmClient {
     }
 }
 
+/// Anthropic API client implementing [`LlmClient`].
+///
+/// Sends prompts to the Anthropic Messages API and extracts the text
+/// response from the first content block. Uses `ureq` for synchronous
+/// HTTP to avoid native-tls/windows-sys conflicts on GNU toolchains.
+///
+/// # Example
+///
+/// ```no_run
+/// use krabnet::tier3::{AnthropicClient, LlmClient};
+///
+/// let client = AnthropicClient::new(
+///     "sk-ant-...".to_string(),
+///     "claude-sonnet-4-6".to_string(),
+///     1024,
+/// );
+/// let result = client.interpret("Analyze this pattern...");
+/// ```
+pub struct AnthropicClient {
+    agent: ureq::Agent,
+    api_key: String,
+    model: String,
+    max_tokens: u32,
+}
+
+impl AnthropicClient {
+    /// Create a new Anthropic API client.
+    ///
+    /// - `api_key`: Anthropic API key (e.g., `sk-ant-...`)
+    /// - `model`: Model ID (e.g., `claude-sonnet-4-6`)
+    /// - `max_tokens`: Maximum tokens in the response
+    pub fn new(api_key: String, model: String, max_tokens: u32) -> Self {
+        Self {
+            agent: ureq::Agent::new(),
+            api_key,
+            model,
+            max_tokens,
+        }
+    }
+}
+
+impl LlmClient for AnthropicClient {
+    fn interpret(&self, prompt: &str) -> Result<String, String> {
+        let body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "messages": [{
+                "role": "user",
+                "content": prompt
+            }]
+        });
+
+        let response = self
+            .agent
+            .post("https://api.anthropic.com/v1/messages")
+            .set("x-api-key", &self.api_key)
+            .set("anthropic-version", "2023-06-01")
+            .set("content-type", "application/json")
+            .send_json(&body);
+
+        match response {
+            Ok(resp) => {
+                let parsed: serde_json::Value = resp
+                    .into_json()
+                    .map_err(|e| format!("Failed to parse response JSON: {}", e))?;
+
+                parsed["content"]
+                    .as_array()
+                    .and_then(|arr| arr.first())
+                    .and_then(|block| block["text"].as_str())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| "No text content in Anthropic response".to_string())
+            }
+            Err(ureq::Error::Status(code, resp)) => {
+                let body_text = resp.into_string().unwrap_or_default();
+                Err(format!("Anthropic API error ({}): {}", code, body_text))
+            }
+            Err(e) => Err(format!("HTTP request failed: {}", e)),
+        }
+    }
+}
+
 /// Serialize frame paths into a natural language prompt for LLM interpretation.
 ///
 /// Converts materialized paths into a structured prompt with causal chain
@@ -335,6 +417,37 @@ mod tests {
         // Should have sent exactly 1000 (channel capacity)
         assert_eq!(sent, 1000);
         // The remaining 100 were dropped -- engine never blocked
+    }
+
+    #[test]
+    fn test_anthropic_client_implements_llm_client() {
+        // DEBT-01: AnthropicClient implements LlmClient trait (compile-time proof)
+        // DEBT-07: AnthropicClient accessible via crate re-export (use crate::AnthropicClient)
+        use crate::AnthropicClient;
+
+        let client = AnthropicClient::new(
+            "test-key".to_string(),
+            "test-model".to_string(),
+            100,
+        );
+
+        // Compile-time proof that AnthropicClient satisfies the LlmClient trait bound.
+        // If this compiles, the trait is implemented.
+        let _: Box<dyn LlmClient> = Box::new(client);
+    }
+
+    #[test]
+    fn test_anthropic_client_env_var_pattern() {
+        // DEBT-02: Structural verification that AnthropicClient accepts the same
+        // parameter types that std::env::var returns (String), and is Send+Sync
+        // (required for the binary's Box<dyn LlmClient> usage across threads).
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AnthropicClient>();
+
+        // Verify construction with String params (matching env var output)
+        let key: String = "sk-ant-test-key".to_string();
+        let model: String = "claude-sonnet-4-6".to_string();
+        let _client = AnthropicClient::new(key, model, 1024);
     }
 
     #[test]
