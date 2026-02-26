@@ -3652,4 +3652,141 @@ mod tests {
         assert_eq!(paths1.len(), 1, "Frame 1 should have 1 path again [1,2]");
         assert_eq!(paths2.len(), 1, "Frame 2 should still have 1 path [2,3]");
     }
+
+    // ── TEST: Incremental stress with oracle verification ───────────────
+
+    #[test]
+    #[ignore] // Takes 10+ seconds; run with `cargo test -- --ignored --test-threads=1`
+    fn test_incremental_stress_with_oracle() {
+        // Engine setup: compaction enabled (threshold: 10000).
+        // No coalescer -- events processed immediately for oracle consistency.
+        let mut engine = Engine::with_compaction(1024, 10_000);
+
+        // ── Build initial graph: 1K nodes, ~2K edges ──
+
+        // 1000 nodes with alternating types TypeId(10), TypeId(11), TypeId(12)
+        for i in 1..=1000u64 {
+            engine.ingest(Event::NodeAdded {
+                node_id: NodeId(i),
+                type_id: TypeId(10 + (i % 3) as u32),
+            });
+        }
+
+        let mut edge_id: u64 = 0;
+        let mut active_edges: Vec<(u64, u64, u64)> = Vec::new();
+
+        // Chain edges: NodeId(i) -> NodeId(i+1) with TypeId(100)
+        for i in 1..1000u64 {
+            engine.ingest(Event::EdgeAdded {
+                edge_id: EdgeId(edge_id),
+                source: NodeId(i),
+                target: NodeId(i + 1),
+                type_id: TypeId(100),
+            });
+            active_edges.push((edge_id, i, i + 1));
+            edge_id += 1;
+        }
+        // Cross-links for richer topology
+        for i in (1..=1000u64).step_by(10) {
+            let target = (i + 50 - 1) % 1000 + 1;
+            if target != i {
+                engine.ingest(Event::EdgeAdded {
+                    edge_id: EdgeId(edge_id),
+                    source: NodeId(i),
+                    target: NodeId(target),
+                    type_id: TypeId(200),
+                });
+                active_edges.push((edge_id, i, target));
+                edge_id += 1;
+            }
+        }
+
+        // ── Register 20 frames ──
+
+        // Anchors at NodeId(1), NodeId(11), NodeId(21), ..., NodeId(191)
+        // 1-hop pattern with target_type constraint (matching existing sustained
+        // throughput test pattern -- proven >50K events/sec)
+        let epoch = Epoch(5000);
+        let mut frame_ids: Vec<u64> = Vec::new();
+        for anchor_idx in 0..20u64 {
+            let anchor = NodeId(1 + anchor_idx * 10);
+            let fid = engine.register_frame(
+                anchor,
+                one_hop_pattern(TypeId(100), TypeId(10)),
+                epoch,
+            );
+            frame_ids.push(fid);
+        }
+
+        // ── Stress loop: 500K mixed events ──
+        //
+        // 60% EdgeAdded, 20% EdgeRemoved, 20% PropertyChanged.
+        // This extends test_sustained_throughput with:
+        //  - All event types (EdgeAdded + EdgeRemoved + PropertyChanged)
+        //  - Oracle checks every 10K events (correctness verification)
+        //  - Concurrent compaction (threshold 10K)
+        //
+        // Oracle check time is excluded from throughput measurement.
+
+        let event_count = 500_000u64;
+        let start = std::time::Instant::now();
+        let mut remove_idx: usize = 0;
+        let mut oracle_time = std::time::Duration::ZERO;
+
+        for i in 0..event_count {
+            match i % 5 {
+                0 | 1 | 2 => {
+                    // 60%: EdgeAdded
+                    let node = NodeId((i % 999) + 1);
+                    engine.ingest(Event::EdgeAdded {
+                        edge_id: EdgeId(edge_id + i),
+                        source: node,
+                        target: NodeId((i % 999) + 2),
+                        type_id: TypeId(100),
+                    });
+                }
+                3 => {
+                    // 20%: EdgeRemoved -- consume from tracked active_edges
+                    if remove_idx < active_edges.len() {
+                        let (eid, src, tgt) = active_edges[remove_idx];
+                        engine.ingest(Event::EdgeRemoved {
+                            edge_id: EdgeId(eid),
+                            source: NodeId(src),
+                            target: NodeId(tgt),
+                        });
+                        remove_idx += 1;
+                    }
+                }
+                4 => {
+                    // 20%: PropertyChanged
+                    engine.ingest(Event::PropertyChanged {
+                        node_id: NodeId((i % 999) + 1),
+                        key: 0,
+                        value: crate::types::PropertyValue::Integer(i as i64),
+                    });
+                }
+                _ => unreachable!(),
+            }
+
+            // Oracle check every 10K events (excluded from throughput timing)
+            if i % 10_000 == 0 && i > 0 {
+                let t = std::time::Instant::now();
+                oracle_check(&mut engine, frame_ids[0]);
+                oracle_time += t.elapsed();
+            }
+        }
+
+        // ── Throughput assertion ──
+        let elapsed = (start.elapsed() - oracle_time).as_secs_f64();
+        let eps = event_count as f64 / elapsed;
+        assert!(
+            eps > 50_000.0,
+            "Expected >50K events/sec, got {eps:.0} ({event_count} events in {elapsed:.2}s)"
+        );
+
+        // ── Final oracle check on ALL 20 frames ──
+        for &fid in &frame_ids {
+            oracle_check(&mut engine, fid);
+        }
+    }
 }
