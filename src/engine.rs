@@ -3400,4 +3400,256 @@ mod tests {
         let paths = engine.query_frame(fid).unwrap();
         assert_eq!(paths.len(), 0, "Should have 0 paths after removing node 3");
     }
+
+    // ── Oracle Test 18: PropertyChanged multi-hop retraction and re-assertion ──
+
+    #[test]
+    fn test_oracle_property_changed_multi_hop() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: A -[100/type20]-> B -[200/type30]-> C
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(30) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(2), target: NodeId(3), type_id: TypeId(200),
+        });
+
+        // Set B's property to matching value
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(100),
+        });
+
+        let reg_epoch = engine.current_epoch();
+
+        // Register 2-hop frame: hop 0 has PropertyEquals filter on B, hop 1 has Filter::None
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::PropertyEquals {
+                    key: 42,
+                    value: crate::types::PropertyValue::Integer(100),
+                },
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(200)),
+                target_type: Some(TypeId(30)),
+                filter: Filter::None,
+            },
+        ];
+        let fid = engine.register_frame(NodeId(1), pattern, reg_epoch);
+
+        // Oracle check: 1 path [1,2,3] (B matches property filter)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path [1,2,3] with matching property");
+
+        // Change B's property to non-matching value
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(999),
+        });
+
+        // Oracle check: 0 paths (B no longer matches filter, path retracted)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 0, "Should have 0 paths after changing property to non-matching");
+
+        // Change B's property back to matching value
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(100),
+        });
+
+        // Oracle check: 1 path again [1,2,3] (re-assertion via incremental dispatch)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path again after restoring matching property");
+    }
+
+    // ── Oracle Test 19: PropertyChanged with no filter is a noop ──────────
+
+    #[test]
+    fn test_oracle_property_changed_no_filter_noop() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: A -[100/type20]-> B
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+
+        // Set a property on B
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 10, value: crate::types::PropertyValue::Integer(42),
+        });
+
+        let reg_epoch = engine.current_epoch();
+
+        // Register 1-hop frame with Filter::None (no property filter)
+        let fid = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Oracle check: 1 path [1,2]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path [1,2]");
+
+        // Change property on B -- should be a noop (no property filter on frame)
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 10, value: crate::types::PropertyValue::Integer(999),
+        });
+
+        // Oracle check: still 1 path (no filter means property change has no effect)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should still have 1 path (no property filter)");
+    }
+
+    // ── Oracle Test 20: PropertyChanged asserts new path after retraction ──
+
+    #[test]
+    fn test_oracle_property_changed_assert_new_path() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: A -[100/type20]-> B, B initially has matching property
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+
+        // Set B's property to matching value so it's in the inverted index at registration
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(100),
+        });
+
+        let reg_epoch = engine.current_epoch();
+
+        // Register 1-hop frame with PropertyEquals filter (key=42, value=100)
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::PropertyEquals {
+                key: 42,
+                value: crate::types::PropertyValue::Integer(100),
+            },
+        }];
+        let fid = engine.register_frame(NodeId(1), pattern, reg_epoch);
+
+        // Oracle check: 1 path [1,2] (B has matching property)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path [1,2] with matching property");
+
+        // Change B's property to non-matching -- retract path
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(999),
+        });
+
+        // Oracle check: 0 paths (B no longer matches filter)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 0, "Should have 0 paths after property changed to non-matching");
+
+        // Set B's property back to matching value -- should re-assert path
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(100),
+        });
+
+        // Oracle check: 1 path [1,2] newly re-asserted via incremental dispatch
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path [1,2] after restoring matching property");
+        assert_eq!(paths[0], vec![NodeId(1), NodeId(2)]);
+    }
+
+    // ── Oracle Test 21: PropertyChanged with multiple frames ──────────────
+
+    #[test]
+    fn test_oracle_property_changed_multiple_frames() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: A -[100/type20]-> B -[200/type30]-> C
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(30) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(2), target: NodeId(3), type_id: TypeId(200),
+        });
+
+        // Set B's property to matching value
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(100),
+        });
+
+        let reg_epoch = engine.current_epoch();
+
+        // Frame 1: anchor=A, 1-hop, PropertyEquals(key=42, value=100) on hop targeting B
+        let pattern1 = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::PropertyEquals {
+                key: 42,
+                value: crate::types::PropertyValue::Integer(100),
+            },
+        }];
+        let fid1 = engine.register_frame(NodeId(1), pattern1, reg_epoch);
+
+        // Frame 2: anchor=B, 1-hop, Filter::None (no property filter)
+        let pattern2 = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(200)),
+            target_type: Some(TypeId(30)),
+            filter: Filter::None,
+        }];
+        let fid2 = engine.register_frame(NodeId(2), pattern2, reg_epoch);
+
+        // Oracle check both frames
+        oracle_check(&mut engine, fid1);
+        oracle_check(&mut engine, fid2);
+        let paths1 = engine.query_frame(fid1).unwrap();
+        let paths2 = engine.query_frame(fid2).unwrap();
+        assert_eq!(paths1.len(), 1, "Frame 1 should have 1 path [1,2]");
+        assert_eq!(paths2.len(), 1, "Frame 2 should have 1 path [2,3]");
+
+        // Change B's property to non-matching value
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(999),
+        });
+
+        // Oracle check both: Frame 1 affected (retraction), Frame 2 unaffected (no filter)
+        oracle_check(&mut engine, fid1);
+        oracle_check(&mut engine, fid2);
+        let paths1 = engine.query_frame(fid1).unwrap();
+        let paths2 = engine.query_frame(fid2).unwrap();
+        assert_eq!(paths1.len(), 0, "Frame 1 should have 0 paths (property no longer matches)");
+        assert_eq!(paths2.len(), 1, "Frame 2 should still have 1 path [2,3] (no property filter)");
+
+        // Restore B's property to matching value
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(100),
+        });
+
+        // Oracle check both: Frame 1 re-asserts, Frame 2 still unchanged
+        oracle_check(&mut engine, fid1);
+        oracle_check(&mut engine, fid2);
+        let paths1 = engine.query_frame(fid1).unwrap();
+        let paths2 = engine.query_frame(fid2).unwrap();
+        assert_eq!(paths1.len(), 1, "Frame 1 should have 1 path again [1,2]");
+        assert_eq!(paths2.len(), 1, "Frame 2 should still have 1 path [2,3]");
+    }
 }
