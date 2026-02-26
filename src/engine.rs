@@ -2303,4 +2303,376 @@ mod tests {
         let freed = engine.relieve_memory_pressure(3);
         assert!(freed <= 3, "Should free at most 3 pages");
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Phase 17: Correctness Oracle Test Harness
+    // ══════════════════════════════════════════════════════════════════════
+    //
+    // The oracle_check function builds a fresh Frame from scratch and
+    // compares its materialized paths against the maintained frame's
+    // current state as unordered HashSets. This is the verification
+    // backbone for all future incremental work (Phases 18-20).
+
+    /// Oracle helper: asserts that a maintained frame's current state
+    /// exactly matches a fresh full-DFS materialization from the same
+    /// anchor and pattern on the current graph.
+    fn oracle_check(engine: &mut Engine, frame_id: u64) {
+        // Get the maintained frame's current paths
+        let maintained_paths: HashSet<Vec<NodeId>> = engine
+            .query_frame(frame_id)
+            .expect("Frame must exist")
+            .into_iter()
+            .collect();
+
+        // Get frame metadata to build reference
+        let (anchor, pattern) = {
+            let frame_arc = engine.frames.get(&frame_id).expect("Frame must exist");
+            let frame = frame_arc.read().expect("RwLock poisoned");
+            (frame.anchor(), frame.pattern().to_vec())
+        };
+
+        // Build fresh reference frame from scratch
+        let epoch = engine.current_epoch();
+        let mut reference = Frame::new(u64::MAX, anchor, pattern);
+        reference.materialize(engine.graph(), epoch);
+        let expected_paths: HashSet<Vec<NodeId>> = reference
+            .query()
+            .into_iter()
+            .cloned()
+            .collect();
+
+        assert_eq!(
+            maintained_paths, expected_paths,
+            "Oracle mismatch for frame {}: maintained {} paths, expected {} paths.\n\
+             Maintained: {:?}\nExpected: {:?}",
+            frame_id,
+            maintained_paths.len(),
+            expected_paths.len(),
+            maintained_paths,
+            expected_paths,
+        );
+    }
+
+    // ── Oracle Test 1: EdgeAdded after registration ─────────────────────
+
+    #[test]
+    fn test_oracle_edge_added_after_registration() {
+        let mut engine = Engine::new(64);
+
+        // Build initial graph: 3 nodes, 1 edge
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+
+        // Register frame: anchor=1, 1-hop outgoing type 100, target_type 20
+        let fid = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Oracle check after registration: should have 1 path [1,2]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path after registration");
+
+        // Add edge 1->3 (type 100) via ingest -- node 3 is type 20, so it matches
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(3), type_id: TypeId(100),
+        });
+
+        // Oracle check: should now have 2 paths [1,2] and [1,3]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 2, "Should have 2 paths after adding edge 1->3");
+    }
+
+    // ── Oracle Test 2: EdgeRemoved ──────────────────────────────────────
+
+    #[test]
+    fn test_oracle_edge_removed() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: 3 nodes, 2 edges
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        // Graph auto-assigns: first edge gets EdgeId(0), second gets EdgeId(1)
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(3), type_id: TypeId(100),
+        });
+
+        // Register frame
+        let fid = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Oracle check: 2 paths
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 2, "Should have 2 paths before removal");
+
+        // Remove the first edge (graph-assigned EdgeId(0): 1->2)
+        engine.ingest(Event::EdgeRemoved {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2),
+        });
+
+        // Oracle check: 1 path remaining [1,3]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path after removing edge 1->2");
+        assert_eq!(paths[0], vec![NodeId(1), NodeId(3)]);
+    }
+
+    // ── Oracle Test 3: NodeRemoved ──────────────────────────────────────
+
+    #[test]
+    fn test_oracle_node_removed() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: 3 nodes, 2 edges
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(3), type_id: TypeId(100),
+        });
+
+        // Register frame
+        let fid = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Oracle check: 2 paths
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 2, "Should have 2 paths before node removal");
+
+        // Remove node 2 -- should cascade edge removal for edge 1->2
+        engine.ingest(Event::NodeRemoved { node_id: NodeId(2) });
+
+        // Oracle check: 1 path remaining [1,3]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path after removing node 2");
+        assert_eq!(paths[0], vec![NodeId(1), NodeId(3)]);
+    }
+
+    // ── Oracle Test 4: PropertyChanged ──────────────────────────────────
+
+    #[test]
+    fn test_oracle_property_changed() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: 3 nodes with edges, both targets have property 42
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(3), type_id: TypeId(100),
+        });
+
+        // Set property on both nodes so both match the PropertyEquals filter
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(100),
+        });
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(3), key: 42, value: crate::types::PropertyValue::Integer(100),
+        });
+
+        let reg_epoch = engine.current_epoch();
+
+        // Register frame with PropertyEquals filter: key=42, value=100
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::PropertyEquals {
+                key: 42,
+                value: crate::types::PropertyValue::Integer(100),
+            },
+        }];
+        let fid = engine.register_frame(NodeId(1), pattern, reg_epoch);
+
+        // Oracle check: 2 paths [1,2] and [1,3]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 2, "Should have 2 paths (both nodes match property)");
+
+        // Change property on node 2 to a non-matching value (routes via node 2
+        // which IS in the inverted index, so frame IS rematerialized)
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(999),
+        });
+
+        // Oracle check: now 1 path [1,3] (node 2 no longer matches filter)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path after changing node 2 property");
+        assert_eq!(paths[0], vec![NodeId(1), NodeId(3)]);
+
+        // Change property back on node 2 to matching value (node 2 still in index
+        // from initial registration)
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(2), key: 42, value: crate::types::PropertyValue::Integer(100),
+        });
+
+        // Oracle check: back to 2 paths
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 2, "Should have 2 paths again after restoring property");
+    }
+
+    // ── Oracle Test 5: Multi-hop diamond ────────────────────────────────
+
+    #[test]
+    fn test_oracle_multi_hop_diamond() {
+        let mut engine = Engine::new(64);
+
+        // Build diamond: 1->2, 1->3, 2->4, 3->4
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(4), type_id: TypeId(30) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        }); // graph edge 0
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(3), type_id: TypeId(100),
+        }); // graph edge 1
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(2), source: NodeId(2), target: NodeId(4), type_id: TypeId(200),
+        }); // graph edge 2
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(3), source: NodeId(3), target: NodeId(4), type_id: TypeId(200),
+        }); // graph edge 3
+
+        // Register 2-hop frame: anchor=1, hop1=outgoing type 100 target 20, hop2=outgoing type 200 target 30
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(200)),
+                target_type: Some(TypeId(30)),
+                filter: Filter::None,
+            },
+        ];
+        let fid = engine.register_frame(NodeId(1), pattern, reg_epoch);
+
+        // Oracle check: 2 paths [1,2,4] and [1,3,4]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 2, "Diamond should produce 2 paths");
+
+        // Add node 5 (type 20) and edges 1->5, 5->4 (new path through diamond)
+        engine.ingest(Event::NodeAdded { node_id: NodeId(5), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(4), source: NodeId(1), target: NodeId(5), type_id: TypeId(100),
+        }); // graph edge 4
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(5), source: NodeId(5), target: NodeId(4), type_id: TypeId(200),
+        }); // graph edge 5
+
+        // Oracle check: 3 paths [1,2,4], [1,3,4], [1,5,4]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 3, "Should have 3 paths after adding 1->5->4");
+
+        // Remove edge 2->4 (graph-assigned EdgeId(2))
+        engine.ingest(Event::EdgeRemoved {
+            edge_id: EdgeId(2), source: NodeId(2), target: NodeId(4),
+        });
+
+        // Oracle check: 2 paths [1,3,4] and [1,5,4] (path through node 2 is broken)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 2, "Should have 2 paths after removing edge 2->4");
+        let path_set: HashSet<Vec<NodeId>> = paths.into_iter().collect();
+        assert!(path_set.contains(&vec![NodeId(1), NodeId(3), NodeId(4)]));
+        assert!(path_set.contains(&vec![NodeId(1), NodeId(5), NodeId(4)]));
+    }
+
+    // ── Oracle Test 6: Unaffected frame unchanged ───────────────────────
+
+    #[test]
+    fn test_oracle_unaffected_frame_unchanged() {
+        let mut engine = Engine::new(64);
+
+        // Build two separate subgraphs:
+        // Subgraph A: 1->2 (type 100)
+        // Subgraph B: 10->20 (type 200)
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(10), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(20), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(10), target: NodeId(20), type_id: TypeId(200),
+        });
+
+        // Register frame A on subgraph A
+        let fid_a = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Register frame B on subgraph B
+        let fid_b = engine.register_frame(
+            NodeId(10),
+            one_hop_pattern(TypeId(200), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Oracle check both frames
+        oracle_check(&mut engine, fid_a);
+        oracle_check(&mut engine, fid_b);
+
+        // Mutate only subgraph A: add node 3 and edge 1->3
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(2), source: NodeId(1), target: NodeId(3), type_id: TypeId(100),
+        });
+
+        // Oracle check both: frame A should update, frame B should be unchanged
+        oracle_check(&mut engine, fid_a);
+        oracle_check(&mut engine, fid_b);
+
+        let paths_a = engine.query_frame(fid_a).unwrap();
+        let paths_b = engine.query_frame(fid_b).unwrap();
+        assert_eq!(paths_a.len(), 2, "Frame A should have 2 paths after mutation");
+        assert_eq!(paths_b.len(), 1, "Frame B should still have 1 path (unaffected)");
+
+        // Mutate only subgraph B: property change on node 20
+        engine.ingest(Event::PropertyChanged {
+            node_id: NodeId(20), key: 0, value: crate::types::PropertyValue::Integer(42),
+        });
+
+        // Oracle check both again
+        oracle_check(&mut engine, fid_a);
+        oracle_check(&mut engine, fid_b);
+    }
 }
