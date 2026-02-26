@@ -2,20 +2,17 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-25)
+See: .planning/PROJECT.md (updated 2026-02-26)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 15: Harden MCP Binary (final gap closure)
-**Milestone:** v2.0 Full Build Completion (67 requirements across 3 phases) + Gap Closure
+**Current focus:** Planning next milestone
+**Milestone:** v2.0 shipped 2026-02-26 (15 phases, 22 plans, 127 requirements)
 
 ## Current Position
 
-Phase: 15 of 15 (Harden MCP Binary)
-Plan: 1/1 — completed 15-01
-Status: Completed 15-01 (MCP binary + benchmarks hardened with Engine::with_config()) -- PHASE 15 COMPLETE
-Last activity: 2026-02-26 — Completed plan 15-01
-
-Progress: [███████████████] 100% (15 of 15 phases completed)
+Milestone v2.0 complete. All 15 phases shipped.
+Status: Between milestones — ready for /gsd:new-milestone
+Last activity: 2026-02-26 — Milestone v2.0 archived
 
 ## Performance Metrics
 

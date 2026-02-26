@@ -111,6 +111,16 @@ None - no external service configuration required.
 - All 180 tests pass with zero regressions, zero clippy warnings, zero doc warnings
 - Ready for Phase 15 (embryonic gap closure) or production deployment
 
+## Self-Check: PASSED
+
+- FOUND: src/grpc.rs (tier3_sender field, with_wal_and_tier3, with_tier3, frame_tx.send, try_send)
+- FOUND: src/bin/krabnet-server.rs (tier3_sender wired into KrabnetServer)
+- FOUND: .planning/phases/14-wire-post-ingest-pipeline/14-01-SUMMARY.md
+- FOUND: commit f87a86c (feat: wire broadcast and Tier3Sender)
+- FOUND: commit 12627d2 (test: integration test)
+- FOUND: commit ae56a1f (docs: complete plan)
+- All 180 tests pass, 53 doc-tests pass, 0 clippy warnings, 0 doc warnings
+
 ---
 *Phase: 14-wire-post-ingest-pipeline*
 *Completed: 2026-02-26*
