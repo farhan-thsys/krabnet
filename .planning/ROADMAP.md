@@ -108,6 +108,10 @@ Plans:
   2. Engine or KrabnetServer holds Tier3Sender (not discarded)
   3. After Tier 2 evaluation, Tier2Result is constructed and sent via try_send()
   4. Integration test verifies end-to-end: ingest → broadcast + Tier 3 processing
+**Plans**: 1 plan (1 wave)
+
+Plans:
+- [ ] 14-01-PLAN.md — Wire broadcast + Tier3Sender into KrabnetServer ingest path + integration test (Wave 1)
 
 ### Phase 15: Harden MCP Binary
 **Goal**: Apply Phase 11 hardening features to the MCP binary path and update enterprise benchmarks to use realistic Engine configuration.
