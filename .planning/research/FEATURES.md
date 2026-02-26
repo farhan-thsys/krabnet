@@ -1,194 +1,237 @@
-# Feature Research
+# Feature Research: Incremental Path Extension
 
-**Domain:** Streaming graph runtime with differential MVCC for pre-materialized traversal
-**Researched:** 2026-02-24
-**Confidence:** MEDIUM — domain is well-understood academically; Krabnet's specific combination is novel and less validated
+**Domain:** Incremental frame maintenance for streaming graph runtime with differential MVCC
+**Researched:** 2026-02-26
+**Confidence:** MEDIUM -- techniques well-established in IVM and differential dataflow literature; applying them to Krabnet's specific frame/DiffCollection architecture requires engineering design decisions not found in any reference system
+
+## Context: What Exists Today
+
+The current engine (`engine.rs`) identifies affected frames via the inverted index on each mutation but does NOT update frame materialized state during `ingest`. The evaluation path reads `net_delta` via read locks and runs `tier1_check`, but the frame's `DiffCollection` of paths is never modified after initial `materialize()`. The `apply_delta` method on `Frame` exists but is only called manually in tests. In other words: **the system currently has cold-start materialization but no online frame maintenance at all.** The "full DFS re-traverse" described in PROJECT.md is the planned-but-not-yet-wired baseline, and incremental path extension is the replacement for that planned baseline.
+
+This means the milestone must deliver both (a) wiring frame maintenance into the `ingest` pipeline and (b) making that maintenance incremental rather than full re-traverse.
 
 ## Feature Landscape
 
-### Table Stakes (Users Expect These)
+### Table Stakes (Must Have for Incremental Path Extension)
 
-Features that any streaming graph runtime or differential dataflow system must have. Missing these means the system is non-functional or non-credible.
+Features without which the milestone is incomplete. These are the minimum to close the gap between "frames are materialized once at registration" and "frames stay current as the graph mutates."
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Property graph model (nodes, edges, properties) | Every graph runtime stores typed nodes and edges with key-value properties. This is the fundamental data model. Neo4j, Memgraph, TigerGraph all use it. | MEDIUM | Krabnet stores adjacency on Node struct (outgoing + incoming). Integer IDs for everything on hot path. Must support typed nodes/edges and property storage. |
-| Graph mutation API (add/remove nodes, edges, properties) | Users must be able to modify the graph. All graph databases expose CRUD operations. Without this, data cannot enter the system. | LOW | Straightforward — the API surface is well-understood. The write-cost tradeoff from adjacency-on-node means mutations update two node structs per edge. |
-| Event ingestion pipeline | Streaming systems must accept events. Flink, Spark Streaming, Kafka Streams, Memgraph all have ingestion paths. A streaming runtime without ingestion is a static graph. | MEDIUM | Krabnet uses a lock-free ring buffer with monotonic epoch sequencing. This is more opinionated than generic ingestion but still table stakes for a streaming system. |
-| Incremental computation (avoid full recomputation) | The entire point of differential/streaming systems. Materialize, Differential Dataflow, Flink Gelly, iGraph, Ingress all do incremental updates. Full recomputation on every change is a non-starter. | HIGH | Core to Krabnet's design: +1/-1 delta semantics. Cold start does full DFS, then incremental re-traversal per event. This is the hardest table-stakes feature to get right. |
-| Correct delta/change semantics | Differential dataflow's defining property: changes expressed as (data, time, diff) triples. Materialize, DD, and DBSP all require correct multiset arithmetic. +1 + (-1) = 0 (annihilation). | HIGH | Krabnet's +1/-1 multiset semantics must be mathematically exact. This is non-negotiable — incorrect delta math produces wrong results silently. |
-| Temporal ordering / logical timestamps | All streaming systems need a notion of time to order events. Timely Dataflow uses partially-ordered timestamps. Flink uses watermarks. Without ordering, results are non-deterministic. | MEDIUM | Krabnet uses monotonic epoch sequencing from the ring buffer. Simpler than DD's partially-ordered timestamps but sufficient for single-node PoC. |
-| Compaction / garbage collection | Differential dataflow's arrangements compact indistinguishable timestamps. Materialize compacts traces. Without compaction, memory grows unboundedly as history accumulates. | MEDIUM | Krabnet does synchronous compaction — collapses surviving tuples after annihilation. Interface isolated for future async. Essential for long-running systems. |
-| Snapshot / temporal query support | Users expect to query the state at a specific point in time. DD arrangements support multi-versioned access. Materialize exposes temporal queries via SQL. | MEDIUM | Krabnet supports temporal snapshots via the MVCC engine. The compaction frontier determines how far back you can query. |
-| Topological indexing | Graph queries need efficient neighbor lookup. Every graph database indexes adjacency. Without it, traversal is O(E) per hop instead of O(degree). | MEDIUM | Krabnet stores adjacency directly on Node structs and uses topological indexing. This is standard but the specific layout (outgoing + incoming on node) is an implementation choice. |
+| **Hop-localized mutation classification** | When an EdgeAdded/EdgeRemoved/PropertyChanged arrives, the system must determine WHICH hop(s) in each affected frame's pattern are touched by this specific mutation, not just that the frame is affected. Without hop localization, the only option is full re-traverse. | MEDIUM | The inverted index already identifies affected frame IDs. This feature adds a second level: for each affected frame, classify the event as touching hop 0, hop 1, ..., hop N based on where the mutated entity sits in the frame's pattern. Requires matching the event's node/edge type against each HopSpec in the pattern. |
+| **Per-hop delta derivation** | Given that a mutation touches hop K of a frame's N-hop pattern, derive the +1/-1 path deltas WITHOUT re-traversing hops 0..K-1 or K+1..N. Only the paths passing through the mutated entity at hop K are affected. New paths through the mutated entity must be discovered; vanished paths must be retracted. | HIGH | This is the core algorithmic feature. For an edge addition at hop K: take the set of partial paths that reach the edge's source at hop K-1, extend them through the new edge to the target, then extend forward through hops K+1..N from the target. For edge removal: find existing complete paths that traverse the removed edge at hop K, retract them all. Property changes: re-evaluate the filter at the affected hop for all paths passing through that node. |
+| **Forward extension from mutation point** | When a new edge/node qualifies at hop K, extend the partial path forward through hops K+1 to N using the existing graph. Collect all newly reachable complete paths and assert them (+1). | MEDIUM | This is a partial DFS starting from the mutation point, not the anchor. The DFS covers hops K+1..N only, with the same HopSpec filters. Bounded by branching factor to the power of (N - K), which is strictly less than the full DFS cost of branching_factor^N. |
+| **Backward prefix resolution from mutation point** | When a new edge appears at hop K, identify which existing partial paths reach the edge's source node at position K. These are the prefixes that can potentially extend through the new edge. | HIGH | Two approaches: (a) walk backward from the source node through hops K-1..0 toward the anchor, collecting valid prefix paths (reverse DFS); (b) maintain a per-frame partial path index keyed by (hop_position, node_id) so prefixes can be looked up in O(1). Approach (b) has memory cost but O(1) lookup. Approach (a) has zero memory cost but O(branching_factor^K) per lookup. |
+| **Delta emission into DiffCollection** | Derived path deltas (new paths = +1, removed paths = -1) must be recorded in the frame's `DiffCollection<Vec<NodeId>>` at the current epoch. This wires incremental path extension into the existing differential MVCC infrastructure. | LOW | The `Frame::apply_delta` method already exists. This feature is about calling it correctly from the incremental extension logic and ensuring the frame's `net_delta`, `mutation_count`, and `last_epoch` are updated. |
+| **Pipeline integration (wiring into Engine::ingest)** | The incremental path extension must execute as part of the `ingest` pipeline, replacing the current no-op frame "evaluation" (which only reads net_delta). After inverted index lookup and fan-out limiting, each affected frame must run incremental extension and emit deltas. | MEDIUM | Currently `std::thread::scope` fans out to threads that do read-only tier1_check. This must change to a write path that acquires write locks and calls the incremental extension logic. Must respect coalescing (batch mutations before extension) and fan-out limits (cap extensions per event). |
+| **Inverted index re-registration on path changes** | When incremental extension discovers new paths or retracts old ones, the inverted index must be updated to reflect the new set of entities referenced by each frame. New paths may introduce nodes not previously in the frame's posting list. | MEDIUM | Currently `register_frame` is called once at frame creation with node IDs from the initial materialization. Incremental extension may discover paths through previously unindexed nodes. The index must be updated incrementally (add new nodes, remove nodes no longer in any path) or periodically re-registered. |
 
-### Differentiators (Competitive Advantage)
+### Differentiators (Competitive Advantage Beyond Baseline)
 
-Features that set Krabnet apart from existing systems. These are not found (or not combined) in existing graph runtimes.
+Features that make Krabnet's incremental path extension notably better than a naive implementation.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Pre-materialized traversal results (parked frames) | **The core differentiator.** Existing graph DBs compute traversals at query time. Materialize pre-computes SQL views. Krabnet pre-computes *graph traversal* results and parks them. When a signal arrives, context is already materialized — zero query-time traversal. MV4PG (2024 paper) explores this for property graphs but as a database extension, not a runtime-native design. | HIGH | Frames define multi-hop patterns from anchor nodes. Cold start does full DFS, then incremental maintenance on each mutation. The frame abstraction (parked traverser) is novel — it is both the query definition and the cached result. |
-| Signal-to-frame routing via inverted index | Signals (events) are routed to affected frames via posting lists, not by scanning all frames. This is how Krabnet achieves O(affected) instead of O(all-frames) per event. No comparable system combines inverted-index routing with graph traversal materialization. | MEDIUM | Node and edge posting lists map graph elements to the frames that depend on them. When a node/edge changes, only frames in its posting list are re-evaluated. Analogous to how search engines route documents to queries, but applied to graph traversal. |
-| Embryonic Frame Discovery with auto-promotion | The system watches the mutation stream for *forming* patterns and auto-promotes them to full parked frames when a completion threshold is met. This is proactive — the system discovers frames nobody asked for. No existing graph runtime or differential dataflow system does autonomous pattern discovery from the mutation stream. | HIGH | Uses bit-vector completion tracking per pattern template. Progressive: partial matches tracked as "embryos," promoted when they cross threshold. This is the most speculative feature — closest analog is emergent pattern detection in stream processing (EPDA algorithm), but applied to graph structure, not event content. |
-| Adaptive frame tiering (hot/warm/cold) | Frames are tiered by access frequency, mutation rate, and recency. Hot frames stay fully materialized; cold frames can be evicted or stored more compactly. This is data tiering applied to *computation results*, not raw data. Elasticsearch does hot/warm/cold for data; Krabnet does it for materialized traversals. | MEDIUM | Scoring function combines query frequency, mutation rate, and recency. Tiering decisions affect memory footprint directly. Important for bounded memory in long-running systems. Similar to ARMS (Adaptive Robust Memory Tiering) in concept but applied to computation artifacts. |
-| Two-tier interpretation (binary + structural) | Tier 1: fast binary delta-sum check (did the frame's delta-sum change?). Tier 2: full structural path analysis (what specifically changed and why?). This avoids expensive structural analysis when the delta-sum says "nothing meaningful changed." | LOW | Binary check is O(1); structural analysis is O(path-length). The two-tier approach is a performance optimization that reduces unnecessary work. Novel in the graph traversal context — similar to Bloom filter pre-checks in database systems. |
-| Differential MVCC as first-class graph primitive | Materialize applies differential dataflow to SQL. Krabnet applies it to *graph traversals*. The +1/-1 delta semantics are applied to graph path results, not relational tuples. This is a novel combination — DD semantics natively on a property graph with traversal-aware compaction. | HIGH | The MVCC engine must handle graph-specific concerns: path validity depends on intermediate nodes, edge deletion can invalidate paths without touching endpoints, etc. More complex than relational IVM because graph paths have structural dependencies. |
-| Zero-allocation hot path | After initialization, the hot path (event ingestion through frame update) does zero heap allocation. All buffers, indexes, and structures are pre-allocated. This is a performance differentiator — most graph databases and streaming systems allocate during processing. | MEDIUM | Requires careful pre-allocation strategy: ring buffer sized at init, frame storage pre-allocated with capacity, index structures using fixed-size arrays. Constrains the design but delivers predictable latency. |
+| **Partial path cache (prefix/suffix index)** | Maintain a per-frame index of partial paths keyed by (hop_position, node_id). Enables O(1) lookup of "which partial paths reach node X at hop K" instead of reverse-DFS. Amortizes the cost of backward prefix resolution across multiple mutations. | HIGH | Memory cost: O(total_partial_paths) per frame. For a frame with B branching factor and N hops, this is O(B^N) entries. Benefit: backward resolution drops from O(B^K) to O(matching_prefixes). This is the RETE-style "store partial matches" approach. Must be maintained incrementally as paths are added/removed. |
+| **Batch delta derivation** | When the coalescer flushes a batch of same-node mutations, derive all path deltas for the batch in a single pass rather than per-event. Multiple edge additions to the same node can share prefix/suffix computation. | MEDIUM | Integrates with existing `MutationCoalescer`. Instead of running incremental extension per event, accumulate events and derive deltas for the batch. Shared prefix computation avoids redundant backward resolution. Particularly valuable for super-node mutations where many edges are added/removed in a window. |
+| **Affected-hop-only cost model** | The cost of incremental extension should be O(affected_paths * remaining_hops), not O(total_paths_in_frame). When a mutation touches hop K of an N-hop pattern, only paths passing through that hop are re-evaluated. Other paths are untouched. | LOW | This is not a separate feature but a correctness property of the per-hop delta derivation. Document it as a design invariant. The cost should be O(prefixes_at_K * branching_factor^(N-K)) for additions and O(paths_through_entity) for removals. |
+| **Trunk-aware extension sharing** | When multiple frames share a trunk sub-path (detected by `trunk.rs`), a mutation to the trunk portion can share the prefix/suffix computation across all frames sharing that trunk. Avoids redundant DFS for the shared portion. | HIGH | Requires a shared trunk cache that maps (trunk_pattern, hop_position, node_id) to partial path sets. When a trunk mutation occurs, compute the trunk-level delta once and distribute to all frames containing that trunk. Interacts with trunk detection and hot-pinning. |
+| **Correctness oracle (debug-mode full re-traverse comparison)** | In debug builds, after incremental extension, perform a full re-traverse and compare the result set against the incrementally maintained state. Any divergence is a bug. | MEDIUM | Essential for validating correctness during development. The full re-traverse is already implemented (`Frame::materialize`). Compare the DiffCollection current_state after incremental extension against a fresh materialization. Add as a `debug_assert!` in the extension path. Can be disabled in release builds for zero cost. |
 
-### Anti-Features (Deliberately NOT Building in PoC)
+### Anti-Features (Do NOT Build)
 
-Features that seem appealing but would add complexity, dilute focus, or conflict with Krabnet's design goals.
+Features that seem related to incremental path extension but would add unjustified complexity or conflict with the design.
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| Query language (Cypher, GQL, Gremlin) | Every graph DB has one. Users expect declarative queries. | Krabnet is not a database — it is a runtime that pre-materializes traversals. Adding a query language implies query-time computation, which contradicts the core value (zero query-time traversal). Query language design is a multi-year effort (see GQL standardization). | Frames are defined programmatically via Rust API. The "query" is the frame pattern definition, not a runtime query string. |
-| Distributed / multi-node execution | Timely Dataflow and Differential Dataflow scale to multiple workers. Flink and Spark are distributed by default. | Distribution adds massive complexity: partitioning the graph, routing events across nodes, distributed compaction, consensus on epoch boundaries. This is a PoC — prove the physics first. | Single-node, single-threaded (with correct atomics for future multi-producer). The ring buffer and atomics are designed to scale, but distribution is a v2+ concern. |
-| Disk persistence / durability | Databases persist data. Users expect crash recovery. | Persistence changes the entire memory model. Krabnet's zero-allocation hot path assumes everything is in memory. Adding WAL, checkpointing, or disk-backed storage is a different system. | In-memory only for PoC. Snapshot export could be added later as a serialization feature, not a persistence engine. |
-| General-purpose graph algorithms (PageRank, community detection, shortest path) | Memgraph MAGE provides 30+ graph algorithms. Neo4j GDS has a full algorithm library. | Krabnet is not a graph analytics platform. Its purpose is pre-materialized traversal for context delivery, not general graph computation. Each algorithm would need its own incremental maintenance strategy. | Frame patterns cover the traversal patterns needed. If a specific algorithm is needed, it can be implemented as a custom frame pattern, but a generic algorithm library is out of scope. |
-| Kafka / Pulsar / external stream connectors | Memgraph has native Kafka/Pulsar connectors. Flink is built on stream connectors. | External connectors add dependency surface and protocol complexity. The ring buffer is the ingestion interface — callers push events into it. How they get those events (Kafka, HTTP, file) is their concern. | Ring buffer API is the integration point. A thin Kafka-to-ring-buffer adapter could exist outside the crate, but it is not part of the runtime. |
-| Multi-threaded event processing | Modern systems parallelize event processing. Timely Dataflow uses multiple workers per machine. | Multi-threaded graph mutation with lock-free semantics and correct differential math is extremely hard to get right. The PoC must prove correctness first. Concurrency bugs in delta computation are silent and catastrophic. | Single-threaded processing with correct atomic ordering for future multi-producer ingestion. The atomics are designed right so the path to multi-threaded is open, but not in PoC. |
-| Async background compaction | Production systems compact in background threads to avoid pausing processing. | Async compaction requires careful synchronization with the MVCC timeline. Readers must not see partially compacted state. The interface is isolated for future async, but the PoC does synchronous compaction. | Synchronous compaction with an isolated interface. When a compaction point is reached, compact inline. The interface boundary means swapping to async later is a refactor, not a redesign. |
-| REST / gRPC API layer | Databases expose network APIs. Users expect HTTP endpoints or RPC interfaces. | Krabnet is a library crate, not a server. Adding a network layer changes the deployment model and introduces serialization, connection management, and API versioning concerns. | Rust API only. A server binary that wraps the crate could be built separately, but the crate itself is embeddable, not network-accessible. |
+| **Speculative forward extension** | Pre-extend paths one hop beyond the current pattern in case the pattern grows later. "Saves work if the pattern is extended." | Violates the principle that frames materialize exactly their declared pattern. Speculative extensions waste memory and computation on paths that may never be needed. Complicates the DiffCollection because speculative paths must be filtered from queries. | Extend the pattern explicitly by creating a new frame with the longer pattern. The cold-start cost is paid once; incremental maintenance handles the rest. |
+| **Cross-frame delta sharing** | When two frames share intermediate nodes, propagate a delta computed for one frame to the other without re-deriving it. | Frame patterns are independently defined. Even if two frames touch the same node at the same hop, their HopSpec filters (edge_type, target_type, property filter) may differ, producing different path sets. Sharing deltas across frames with different filters produces wrong results. | Trunk-aware extension sharing (above) is the safe version: it shares computation only for frames with identical trunk sub-patterns, not merely overlapping nodes. |
+| **Lazy/deferred extension** | Do not extend paths eagerly on mutation. Instead, mark frames as "dirty" and extend only when queried. | Contradicts Krabnet's core value proposition: "when a signal arrives, context is already materialized." Lazy extension means the frame may be stale at query time, requiring on-demand re-traversal -- exactly what Krabnet exists to avoid. | Eager extension on mutation. The fan-out limiter already caps the number of frames extended per event. Deferred frames in the fan-out queue still get extended, just not immediately. |
+| **Cycle-aware infinite extension** | Detect cycles during extension and produce infinite-length path results. | Frame patterns have finite hop counts (Vec<HopSpec> has known length). Cycle detection is handled by the DFS naturally terminating at the hop limit. Infinite paths are meaningless in the frame model. | The existing hop limit is the cycle termination mechanism. No additional cycle handling is needed for incremental extension. |
+| **Parallel per-hop extension within a single frame** | Parallelize the forward extension at each hop level within a single frame's extension computation. | For typical patterns (2-5 hops), the per-hop work is too fine-grained for thread overhead to pay off. The existing parallelism is at the frame level (multiple frames extended in parallel via `std::thread::scope`). Adding intra-frame parallelism creates contention on the frame's write lock. | Keep frame-level parallelism via `std::thread::scope`. Intra-frame work is sequential but bounded by the hop count and local branching factor. |
 
 ## Feature Dependencies
 
 ```
-[Ring Buffer Ingestion]
-    └──requires──> [Monotonic Epoch Sequencer]
-                       └──feeds──> [Differential MVCC Engine]
-                                       └──requires──> [+1/-1 Delta Semantics]
-                                       └──requires──> [Compaction]
-                                       └──requires──> [Temporal Snapshots]
+[Hop-Localized Mutation Classification]
+    |
+    v
+[Per-Hop Delta Derivation]
+    |
+    +--requires--> [Forward Extension from Mutation Point]
+    |                  |
+    |                  +--uses--> Graph::neighbors() (existing)
+    |                  +--uses--> HopSpec filters (existing)
+    |
+    +--requires--> [Backward Prefix Resolution from Mutation Point]
+    |                  |
+    |                  +--option-a--> Reverse DFS (zero memory, O(B^K) per lookup)
+    |                  +--option-b--> Partial Path Cache (O(paths) memory, O(1) lookup)
+    |
+    v
+[Delta Emission into DiffCollection]
+    |
+    +--uses--> Frame::apply_delta (existing)
+    +--uses--> DiffCollection::assert_tuple / retract_tuple (existing)
+    |
+    v
+[Pipeline Integration (Engine::ingest wiring)]
+    |
+    +--requires--> All of the above
+    +--interacts--> MutationCoalescer (existing, batch mode)
+    +--interacts--> FanOutLimiter (existing, cap per-event extensions)
+    +--interacts--> std::thread::scope parallelism (existing, needs write locks)
+    |
+    v
+[Inverted Index Re-registration]
+    |
+    +--requires--> Delta Emission (must know what paths changed)
+    +--uses--> InvertedIndex::register_frame / unregister_frame (existing)
 
-[Property Graph + Topological Indexing]
-    └──required-by──> [Frame Materialization]
-                          └──requires──> [Differential MVCC Engine]
-                          └──requires──> [Signal-to-Frame Routing (Inverted Index)]
+--- Differentiators (build after table stakes) ---
 
-[Frame Materialization]
-    └──required-by──> [Adaptive Tiering (Hot/Warm/Cold)]
-    └──required-by──> [Two-Tier Interpretation]
-    └──required-by──> [Embryonic Frame Discovery]
+[Partial Path Cache]
+    +--enhances--> Backward Prefix Resolution (O(1) vs O(B^K))
+    +--requires--> Delta Emission (cache must be maintained incrementally)
 
-[Signal-to-Frame Routing]
-    └──requires──> [Property Graph + Topological Indexing]
-    └──requires──> [Frame Materialization]
+[Batch Delta Derivation]
+    +--enhances--> Per-Hop Delta Derivation
+    +--requires--> MutationCoalescer (existing)
 
-[Embryonic Frame Discovery]
-    └──requires──> [Frame Materialization]
-    └──requires──> [Ring Buffer Ingestion] (watches mutation stream)
-    └──requires──> [Signal-to-Frame Routing] (promoted frames need routing)
+[Trunk-Aware Extension Sharing]
+    +--requires--> Partial Path Cache
+    +--requires--> trunk::detect_trunks (existing)
+    +--enhances--> Per-Hop Delta Derivation (shared prefix computation)
 
-[String Interning]
-    └──enhances──> [Property Graph] (integer IDs on hot path)
-    └──enhances──> [Zero-Allocation Hot Path]
-
-[Zero-Allocation Hot Path]
-    └──constrains──> [All components] (no heap alloc after init)
+[Correctness Oracle]
+    +--requires--> Per-Hop Delta Derivation
+    +--uses--> Frame::materialize (existing, for comparison)
 ```
 
 ### Dependency Notes
 
-- **Ring Buffer requires Monotonic Epoch Sequencer:** Events must be ordered before they enter the differential engine. The sequencer assigns monotonic epochs that become the time dimension in (data, time, diff) triples.
-- **Differential MVCC requires Property Graph:** The delta semantics operate on graph mutations — you cannot compute +1/-1 deltas without a graph to mutate.
-- **Frame Materialization requires both MVCC and Graph:** Frames are the intersection of graph traversal (needs the graph) and incremental maintenance (needs the delta engine).
-- **Signal-to-Frame Routing requires Frames:** You cannot route signals to frames that do not exist. The inverted index is built as frames are created.
-- **Embryonic Discovery requires Frames + Ingestion:** Discovery watches the mutation stream (from ingestion) and promotes embryos to frames (needs the frame system).
-- **Adaptive Tiering enhances Frame Materialization:** Tiering is an optimization on top of frames — it decides which frames stay hot. Can be deferred without breaking core functionality.
-- **Two-Tier Interpretation enhances Frame Materialization:** An optimization that avoids unnecessary structural analysis. Frames work without it (just slower).
-- **String Interning enhances hot path:** Not functionally required but critical for the zero-allocation constraint. Must be in place before hot-path benchmarking.
+- **Hop-Localized Mutation Classification requires nothing new:** The HopSpec patterns and Event types already exist. Classification is pure pattern matching: compare the event's entity IDs and types against each HopSpec in the frame's pattern.
+- **Per-Hop Delta Derivation requires both Forward Extension and Backward Prefix Resolution:** For an edge addition at hop K, you need the prefixes that reach the source (backward) and the suffixes that extend from the target (forward). Both halves are needed to produce complete paths.
+- **Pipeline Integration requires all table stakes features:** It is the final wiring step. Must not be attempted until the extension logic is proven correct in isolation.
+- **Partial Path Cache is the critical differentiator:** Without it, backward prefix resolution is O(B^K) per mutation. With it, backward resolution is O(matching_prefixes). The cache makes incremental extension viable for deep patterns (3+ hops) at scale. However, it adds memory cost and maintenance complexity, so it should be deferred if the initial reverse-DFS approach is sufficient for the target workloads.
+- **Correctness Oracle should be implemented early:** It is a safety net for the entire extension algorithm. Build it alongside per-hop delta derivation, not after.
 
 ## MVP Definition
 
-### Launch With (v1 — Proof of Concept)
+### Launch With (v3.0 -- Incremental Path Extension Baseline)
 
-Minimum viable system that proves the physics of differential MVCC for graph traversals.
+Minimum viable incremental path extension that replaces full DFS re-traverse.
 
-- [ ] **Ring buffer with monotonic epoch sequencing** — ingestion path for events; without it nothing enters the system
-- [ ] **In-memory property graph with topological indexing** — the data structure everything operates on
-- [ ] **Differential MVCC engine (+1/-1 deltas, compaction, snapshots)** — the mathematical core; must be correct or everything downstream is wrong
-- [ ] **Frame materialization with multi-hop patterns** — the core value proposition; pre-computed traversal results
-- [ ] **Signal-to-frame routing via inverted index** — efficient event-to-frame mapping; without it, every event scans all frames
-- [ ] **String interning** — required for zero-allocation hot path constraint
-- [ ] **Top-level Engine struct** — wires all components into a coherent ingest pipeline
+- [ ] **Hop-localized mutation classification** -- determine which hop(s) each mutation touches per affected frame
+- [ ] **Per-hop delta derivation with forward extension** -- extend new paths from mutation point forward through remaining hops
+- [ ] **Backward prefix resolution via reverse DFS** -- walk backward from mutation point to anchor to find valid prefixes (zero-memory approach first)
+- [ ] **Delta emission into DiffCollection** -- wire derived deltas into the existing differential infrastructure
+- [ ] **Pipeline integration into Engine::ingest** -- replace the read-only tier1_check with write-path incremental extension
+- [ ] **Inverted index incremental update** -- add newly discovered nodes to posting lists
+- [ ] **Correctness oracle in debug builds** -- full re-traverse comparison after every incremental extension
 
-### Add After Validation (v1.x)
+### Add After Validation (v3.x)
 
-Features to add once the core is proven correct and performant.
+Features to add once baseline incremental extension is correct and benchmarked.
 
-- [ ] **Two-tier interpretation** — add when benchmarks show structural analysis is a bottleneck on the hot path
-- [ ] **Adaptive frame tiering** — add when frame count grows large enough that memory pressure becomes measurable
-- [ ] **Embryonic Frame Discovery** — add when the system is stable enough to trust autonomous frame creation; requires confidence in delta correctness
+- [ ] **Partial path cache** -- add when benchmarks show backward prefix resolution is the bottleneck (likely for patterns with 3+ hops and branching factor > 10)
+- [ ] **Batch delta derivation** -- add when coalescer integration shows redundant prefix computation across batched events
+- [ ] **Trunk-aware extension sharing** -- add when many frames share trunk sub-paths and trunk mutations dominate the workload
 
-### Future Consideration (v2+)
+### Future Consideration (v4+)
 
-Features to defer until the PoC has validated the core hypothesis.
-
-- [ ] **Async background compaction** — swap synchronous compaction for background thread when processing throughput demands it
-- [ ] **Multi-producer ingestion** — enable multiple threads to push into the ring buffer; atomics are already correct for this
-- [ ] **Snapshot export / serialization** — allow persisting system state for restart or inspection
-- [ ] **External connector adapters** — thin wrappers (Kafka, etc.) that push into the ring buffer
+- [ ] **Adaptive extension strategy** -- dynamically choose between incremental extension and full re-traverse based on the ratio of affected paths to total paths (when > 50% of paths are affected, full re-traverse may be cheaper)
+- [ ] **Extension cost estimator** -- before extending, estimate the cost and compare against re-traverse cost; choose the cheaper option per frame per event
 
 ## Feature Prioritization Matrix
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| Ring buffer + epoch sequencer | HIGH | MEDIUM | P1 |
-| Property graph + topological indexing | HIGH | MEDIUM | P1 |
-| Differential MVCC engine | HIGH | HIGH | P1 |
-| Frame materialization | HIGH | HIGH | P1 |
-| Signal-to-frame routing | HIGH | MEDIUM | P1 |
-| String interning | MEDIUM | LOW | P1 |
-| Engine struct (top-level wiring) | HIGH | LOW | P1 |
-| Two-tier interpretation | MEDIUM | LOW | P2 |
-| Adaptive frame tiering | MEDIUM | MEDIUM | P2 |
-| Embryonic Frame Discovery | HIGH | HIGH | P2 |
-| Async compaction | LOW | MEDIUM | P3 |
-| Multi-producer ingestion | LOW | LOW | P3 |
-| Snapshot export | LOW | MEDIUM | P3 |
+| Hop-localized mutation classification | HIGH | LOW | P1 |
+| Per-hop delta derivation | HIGH | HIGH | P1 |
+| Forward extension from mutation point | HIGH | MEDIUM | P1 |
+| Backward prefix resolution (reverse DFS) | HIGH | MEDIUM | P1 |
+| Delta emission into DiffCollection | HIGH | LOW | P1 |
+| Pipeline integration (Engine::ingest) | HIGH | MEDIUM | P1 |
+| Inverted index incremental update | MEDIUM | MEDIUM | P1 |
+| Correctness oracle (debug mode) | HIGH | MEDIUM | P1 |
+| Partial path cache | HIGH | HIGH | P2 |
+| Batch delta derivation | MEDIUM | MEDIUM | P2 |
+| Trunk-aware extension sharing | MEDIUM | HIGH | P3 |
+| Adaptive extension strategy | LOW | MEDIUM | P3 |
 
 **Priority key:**
-- P1: Must have for PoC launch — proves the core hypothesis
-- P2: Should have — adds value but core works without them
-- P3: Nice to have — future consideration after validation
+- P1: Must have for v3.0 -- delivers the O(affected) update promise
+- P2: Should have -- significant performance improvement for known workloads
+- P3: Nice to have -- optimization for specific patterns, defer until validated
 
-## Competitor Feature Analysis
+## Existing Infrastructure Dependencies
 
-| Feature | Differential Dataflow | Materialize | Memgraph | MV4PG (Research) | Krabnet |
-|---------|----------------------|-------------|----------|-------------------|---------|
-| Incremental computation | Yes — core capability | Yes — via DD | Yes — dynamic algorithms | Yes — templated maintenance | Yes — +1/-1 deltas on graph traversals |
-| Property graph model | No — relational collections | No — SQL tables | Yes — native property graph | Yes — extends Cypher/GQL | Yes — in-memory with adjacency-on-node |
-| Pre-materialized results | Arrangements (indexed views) | Materialized views (SQL) | No — query-time computation | Yes — materialized views on graph patterns | Yes — parked frames with multi-hop patterns |
-| Streaming ingestion | Yes — timely dataflow streams | Yes — Kafka sources | Yes — Kafka/Pulsar connectors | No — batch maintenance | Yes — lock-free ring buffer |
-| Delta semantics | Yes — (data, time, diff) | Yes — via DD | No — recomputation | No — template-based maintenance | Yes — +1/-1 multiset |
-| Compaction | Yes — timestamp coalescing | Yes — via DD | N/A | N/A | Yes — synchronous, interface-isolated |
-| Temporal snapshots | Yes — multi-versioned traces | Yes — temporal queries | No | No | Yes — MVCC with epoch-based versioning |
-| Signal routing to views | N/A — dataflow graph handles | N/A — SQL layer handles | N/A | No — query-time optimization | Yes — inverted index posting lists |
-| Autonomous pattern discovery | No | No | No | No | Yes — Embryonic Frame Discovery |
-| Adaptive tiering of results | No | No | No | No | Yes — hot/warm/cold frame tiering |
-| Zero-allocation hot path | No — allocates during processing | No — JVM-based components | No — C++ with standard allocation | N/A — database extension | Yes — pre-allocated everything |
-| Query language | No — Rust API | Yes — SQL | Yes — Cypher | Yes — GQL/Cypher | No — Rust API (deliberate) |
-| Distributed execution | Yes — multi-worker | Yes — clustered | Yes — replication | N/A | No — single-node (deliberate) |
+The following existing components are required by incremental path extension and must NOT be modified in ways that break their contracts:
 
-**Key insight:** No existing system combines all of: property graph model + differential delta semantics + pre-materialized traversal results + signal routing + autonomous pattern discovery. Materialize comes closest conceptually (differential dataflow + materialized views) but operates on SQL, not graph traversals. MV4PG is the closest in the graph world but uses template-based maintenance rather than differential semantics, and does not do streaming ingestion.
+| Component | What Incremental Extension Needs From It | Contract |
+|-----------|------------------------------------------|----------|
+| `Frame::apply_delta(path, epoch, delta)` | Emit +1/-1 for discovered/retracted paths | Updates mutation_count, last_epoch, net_delta, and DiffCollection |
+| `Frame::pattern()` -> `&[HopSpec]` | Read the hop pattern to classify mutations and drive extension | Immutable after frame creation |
+| `Frame::anchor()` -> `NodeId` | Starting point for backward prefix resolution | Immutable after frame creation |
+| `DiffCollection::assert_tuple(data, epoch)` | Record new paths | Maintains exact multiset semantics |
+| `DiffCollection::retract_tuple(data, epoch)` | Remove vanished paths | Maintains exact multiset semantics |
+| `DiffCollection::current_state()` -> `Vec<&T>` | Query current paths for correctness oracle comparison | Returns paths with positive net delta |
+| `Graph::neighbors(node, direction, edge_type)` | Forward and backward neighbor traversal during extension | Returns (EdgeId, NodeId) pairs filtered by direction and optional edge type |
+| `Graph::get_node_type(node)` -> `Option<TypeId>` | Target type filtering during forward extension | Returns None for nonexistent nodes |
+| `Graph::get_property(node, key)` -> `Option<&PropertyValue>` | Property filtering during forward extension | Returns None for missing properties |
+| `InvertedIndex::register_frame(id, nodes, edges)` | Update posting lists when new paths are discovered | Idempotent for duplicate registrations |
+| `InvertedIndex::affected_frames(event)` -> `HashSet<u64>` | Identify which frames need extension | Deduplicates across node and edge lookups |
+| `MutationCoalescer` | Batch mutations before extension | Flushes CoalescedBatch with deduplicated node entries |
+| `FanOutLimiter` | Cap extensions per event for super-nodes | Returns immediate + deferred frame lists |
+| `std::thread::scope` | Frame-level parallelism for extension | Each thread must acquire write lock on its frame |
+
+## Event-Type-Specific Extension Behavior
+
+Each event type requires different incremental extension logic:
+
+| Event Type | Extension Behavior | Affected Hops | Cost Model |
+|------------|-------------------|---------------|------------|
+| **EdgeAdded** | Most common and complex. Classify which hop(s) the new edge satisfies. For each hop K where (source, edge_type) matches: resolve backward prefixes to hop K, extend forward from target through hops K+1..N. Assert all newly complete paths. | Hop(s) where edge type and source node match | O(prefixes_at_K * B^(N-K)) per matching hop |
+| **EdgeRemoved** | Find all existing complete paths that traverse the removed edge at any hop position. Retract all such paths (-1). | All hops where the removed edge was used | O(paths_through_edge) -- lookup from current_state |
+| **NodeRemoved** | Find all existing complete paths that include the removed node at any position. Retract all such paths. Also retract paths where the removed node is a target at any hop. | All hops where the node appears | O(paths_through_node) |
+| **PropertyChanged** | Re-evaluate property filters at hops where the changed node is a target. Paths that previously passed the filter but now fail: retract. Paths that previously failed but now pass: assert (requires forward extension from that hop). | Hops with property filters targeting this node | O(affected_paths * filter_cost) |
+| **NodeAdded** | Typically no-op for existing frames (new isolated nodes have no edges). May affect frames with anchors at the new node ID (unlikely for incrementally maintained frames). | None for existing frames | O(1) |
+
+## Complexity Analysis: Incremental vs Full Re-traverse
+
+For a frame with N hops, branching factor B, and a single mutation at hop K:
+
+| Approach | Cost | Memory | Notes |
+|----------|------|--------|-------|
+| Full DFS re-traverse | O(B^N) | O(B^N) paths | Current planned baseline. Always correct but expensive. |
+| Incremental (reverse DFS for prefixes) | O(B^K + B^(N-K)) | O(1) extra | Backward prefix + forward extension. No extra memory. |
+| Incremental (with partial path cache) | O(matching_prefixes * B^(N-K)) | O(B^N) cached partial paths | O(1) prefix lookup. Forward extension only. Best for repeated mutations. |
+| Incremental (batch, M events same hop) | O(B^K + M * B^(N-K)) | O(1) or O(B^N) | Shared backward resolution across batch. M << B^K for coalesced events. |
+
+**When incremental wins:** Mutations are localized (touch few hops), branching factor is moderate (< 100), and pattern depth is >= 2 hops. For 1-hop patterns with branching factor 1, incremental has no advantage.
+
+**When full re-traverse wins:** When > 50% of paths are affected (e.g., anchor node removal), or when the graph is very small (re-traverse cost is negligible). The adaptive extension strategy (P3) would handle this.
 
 ## Sources
 
-- [Differential Dataflow GitHub](https://github.com/TimelyDataflow/differential-dataflow) — core DD implementation and documentation (HIGH confidence)
-- [Differential Dataflow Arrangements](https://timelydataflow.github.io/differential-dataflow/chapter_5/chapter_5.html) — arrangements, compaction, sharing (HIGH confidence)
-- [Materialize: Building DD from Scratch](https://materialize.com/blog/differential-from-scratch/) — DD concepts explained (HIGH confidence)
-- [Materialize: IVM Replicas](https://materialize.com/blog/ivm-database-replica/) — incremental view maintenance patterns (HIGH confidence)
-- [MV4PG: Materialized Views for Property Graphs](https://arxiv.org/abs/2411.18847) — graph-specific materialized views with templated maintenance (MEDIUM confidence — Nov 2024 paper, not yet widely validated)
-- [Memgraph Streaming Features](https://memgraph.com/docs/data-streams) — real-time graph processing with Kafka/Pulsar (HIGH confidence)
-- [Flink Gelly Streaming](https://github.com/vasia/gelly-streaming) — streaming graph API for Apache Flink (MEDIUM confidence — experimental)
-- [VeilGraph: Incremental Graph Stream Processing](https://journalofbigdata.springeropen.com/articles/10.1186/s40537-022-00565-8) — incremental graph processing patterns (MEDIUM confidence)
-- [LMAX Disruptor](https://lmax-exchange.github.io/disruptor/user-guide/index.html) — ring buffer patterns for high-performance event processing (HIGH confidence)
-- [Ferrous Systems: Lock-free Ring Buffer](https://ferrous-systems.com/blog/lock-free-ring-buffer/) — Rust-specific lock-free ring buffer design (HIGH confidence)
-- [EPDA: Emergent Pattern Detection Algorithm](https://hal.science/hal-02558083/document) — closest analog to Embryonic Frame Discovery in stream processing (LOW confidence — different domain)
-- [Elasticsearch Data Tiers](https://www.elastic.co/docs/manage-data/lifecycle/data-tiers) — hot/warm/cold tiering patterns (HIGH confidence — different domain but established pattern)
-- [Incremental Pattern Discovery on Streams, Graphs and Tensors](http://reports-archive.adm.cs.cmu.edu/anon/2007/CMU-CS-07-149.pdf) — academic foundation for pattern discovery in graph streams (MEDIUM confidence — 2007, foundational but older)
+### Primary (HIGH confidence)
+- [Materialize: Delta Joins and Late Materialization](https://materialize.com/blog/delta-joins/) -- delta propagation through multi-way joins without intermediate materialization
+- [Frank McSherry: Differential Graph Computation](http://www.frankmcsherry.org/differential/dataflow/2015/05/12/bfs.html) -- incremental graph BFS via differential dataflow, per-operator delta propagation
+- [Frank McSherry: Differential Dataflow](http://www.frankmcsherry.org/differential/dataflow/2015/04/07/differential.html) -- core mechanics: Mobius inversion, sparse differences, O(affected) updates
+- [Differential Dataflow (GitHub)](https://github.com/TimelyDataflow/differential-dataflow) -- reference implementation of differential computation on graphs
+
+### Secondary (MEDIUM confidence)
+- [Localized RETE for Incremental Graph Queries (ICGT 2024)](https://arxiv.org/html/2405.01145v1) -- localized change propagation in RETE networks, marking-sensitive partial match storage
+- [Incremental Graph Pattern Matching (ACM TODS 2013)](https://dl.acm.org/doi/10.1145/2489791) -- delta propagation for graph pattern matching, affected area bounded updates
+- [MV4PG: Materialized Views for Property Graphs (2024)](https://arxiv.org/html/2411.18847v1) -- templated maintenance for variable-length path patterns in property graphs
+- [Everything About IVM](https://materializedview.io/p/everything-to-know-incremental-view-maintenance) -- IVM taxonomy, delta rules, counting/DRed algorithms
+- [RisingWave: Building Differential Dataflow](https://risingwave.com/blog/from-zero-to-hero-building-differential-dataflow/) -- practical guide to differential dataflow operator implementation
+
+### Tertiary (LOW confidence)
+- [RETE Algorithm (Wikipedia)](https://en.wikipedia.org/wiki/Rete_algorithm) -- partial match storage and incremental update propagation in rule engines
+- [Incremental Graph Computations (SIGMOD 2017)](https://dl.acm.org/doi/10.1145/3035918.3035944) -- localizable vs bounded incremental graph algorithms
 
 ---
-*Feature research for: Streaming graph runtime with differential MVCC*
-*Researched: 2026-02-24*
+*Feature research for: Incremental path extension in streaming graph runtime*
+*Researched: 2026-02-26*

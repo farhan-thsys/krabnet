@@ -1,320 +1,465 @@
-# Pitfalls Research
+# Pitfalls: Incremental Path Extension for Frame Maintenance
 
-**Domain:** Streaming graph runtime with differential MVCC in Rust (lock-free concurrency + graph data structures + differential dataflow)
-**Researched:** 2026-02-24
-**Confidence:** HIGH (multiple authoritative sources: Rustonomicon, crossbeam docs, Materialize engineering blog, differential-dataflow issues, Ferrous Systems)
+**Domain:** Adding incremental graph traversal maintenance to an existing full-re-traverse differential MVCC runtime
+**Researched:** 2026-02-26
+**Confidence:** HIGH (analysis grounded in actual codebase structures: `frame.rs`, `diff.rs`, `graph.rs`, `engine.rs`, `compaction.rs`, `routing.rs`, `trunk.rs`; cross-referenced with differential dataflow literature, incremental graph pattern matching theory, and Materialize engineering)
+
+---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Unsound `unsafe impl Send/Sync` on Types Containing `UnsafeCell`
-
-**What goes wrong:**
-Implementing `Send` or `Sync` on a struct containing `UnsafeCell` (or raw pointers to shared mutable state) without ensuring the type's internal synchronization is actually thread-safe. This causes undefined behavior: data races, torn reads/writes, and memory corruption that manifests nondeterministically and often only on ARM or under load.
-
-**Why it happens:**
-Rust's auto-trait derivation opts out of `Send`/`Sync` for types containing `UnsafeCell` or raw pointers. Developers add `unsafe impl Sync for MyType {}` to "make the compiler happy" without proving the synchronization contract. The ring buffer's slot array and the MVCC version chains both require interior mutability that the compiler cannot verify.
-
-**How to avoid:**
-- Document the synchronization invariant in a `// SAFETY:` comment above every `unsafe impl Send` and `unsafe impl Sync`. The comment must state *which* mechanism (atomic CAS, epoch sequencing, exclusive ownership transfer) makes the impl sound.
-- Never implement `Sync` on a type that allows `&self` to mutate non-atomic data. If mutation through `&self` is required, the mutation must go through `AtomicU64`/`AtomicBool`/`AtomicPtr` or be protected by an external synchronization protocol that is documented.
-- Rule of thumb: if a struct has `UnsafeCell<T>` where `T` is not an atomic type, that struct should almost certainly NOT be `Sync` unless all access goes through a single-writer protocol enforced by the ring buffer's index sequencing.
-
-**Warning signs:**
-- `unsafe impl Sync` without a `// SAFETY:` comment
-- `UnsafeCell` wrapping a non-atomic type (e.g., `UnsafeCell<Option<Event>>`) in a struct that is shared across threads
-- Tests pass on x86 but fail intermittently on CI with different core counts
-- Miri reports "data race" errors when running `cargo +nightly miri test`
-
-**Phase to address:**
-Ring buffer module (Phase 1). This is the first module that introduces `unsafe` concurrency. Establish the safety documentation pattern here and enforce it for all subsequent modules.
+These are mistakes that silently produce wrong results -- the incremental path state diverges from what full DFS re-traverse would produce, and nothing panics or errors. These are the hardest bugs to find and the most dangerous for a system whose core value proposition is "the differential math is exact."
 
 ---
 
-### Pitfall 2: Incorrect Atomic Memory Ordering (Acquire/Release Misuse)
+### Pitfall 1: Ghost Paths After Edge Deletion (Missing Retractions)
 
 **What goes wrong:**
-Using `Ordering::Relaxed` where `Acquire/Release` is needed, or using `Acquire/Release` where `SeqCst` is needed for a total order. The most common failure mode: a producer writes event data into a ring buffer slot, then updates the write index with `Relaxed` ordering. A consumer sees the updated index but reads stale/uninitialized slot data because the CPU reordered the data write after the index write. This is invisible on x86 (which has strong memory ordering) but crashes on ARM.
+An edge is deleted from the graph, but the incremental path extension logic fails to retract all paths that traversed the deleted edge. The frame's DiffCollection still contains +1 assertions for paths that no longer exist in the graph. `frame.query()` returns paths that full DFS re-traverse would not produce.
 
-**Why it happens:**
-x86 has a Total Store Order that masks most ordering bugs. Developers test on x86, everything passes, and the code ships with `Relaxed` everywhere for "performance." The Rustonomicon warns: "having your program run a bit slower is certainly better than it running incorrectly." Additionally, `SeqCst` is often used as a blanket "safe" default, which obscures the actual synchronization protocol and makes code review harder -- reviewers cannot tell which orderings form paired Acquire/Release relationships.
+**Why it happens in Krabnet specifically:**
+The current system (`frame.rs` line 128-192) does full DFS from anchor through all hops on every event affecting the frame. This is correct-by-construction: the full traversal discovers exactly the paths that exist. Incremental path extension replaces this with "only traverse the delta" -- when an edge `(A, B)` of type T is deleted, the system must identify and retract every path that used that specific edge at any hop position.
 
-**How to avoid:**
-- **Rule: every atomic store that "publishes" data (makes previously written data visible to other threads) MUST use `Release`. Every atomic load that "consumes" published data MUST use `Acquire`.** This is the fundamental Acquire/Release protocol.
-- Use `SeqCst` ONLY when you need a total order across multiple independent atomic variables (rare in Krabnet -- the ring buffer's monotonic epoch sequencer may be the only case).
-- For the ring buffer: the write index update is `Release`, the read of that index by the consumer is `Acquire`. The epoch counter increment is `Release`, the snapshot read is `Acquire`.
-- For compare-and-swap operations (CAS), use `AcqRel` for the success case and `Acquire` for the failure case.
-- Comment every atomic operation with its pairing partner: `// Release: pairs with Acquire in consumer_read()`.
+The difficulty: a single edge deletion can affect paths at multiple hop depths. Consider a 3-hop pattern `[H1, H2, H3]` anchored at node X. If edge `(B, C)` is deleted, path `[X, A, B, C, D]` must be retracted. But the incremental logic only receives the event `EdgeRemoved { source: B, target: C }`. It must:
+1. Determine that node B appears at hop position 1 in some paths
+2. Determine that the edge `(B, C)` satisfies hop H2's direction and type filter
+3. Find all existing paths that include the sub-path `[..., B, C, ...]`
+4. Retract each such path
 
-**Warning signs:**
-- Any `Ordering::Relaxed` on a variable that gates access to non-atomic data
-- `SeqCst` used everywhere without documented rationale (indicates developer didn't analyze ordering requirements)
-- Tests pass on x86 but fail on ARM CI or under `loom` model checking
-- Atomic operations without comments explaining the synchronization pair
+If any of these steps is incomplete (e.g., the inverted index only tracks anchor nodes and endpoint nodes, not intermediate hop nodes), paths are silently missed.
 
-**Phase to address:**
-Ring buffer module (Phase 1) and MVCC engine (Phase 3). These modules have the highest density of atomics. The ordering protocol established in Phase 1 must be validated with `loom` tests before proceeding.
+**Consequences:**
+- `frame.query()` returns paths that do not exist in the graph -- a correctness violation
+- The differential math is no longer exact: the frame's DiffCollection has positive-net-delta tuples for paths that should have been annihilated
+- `frame.snapshot(epoch)` diverges from what `frame.rematerialize()` would produce at the same epoch
+- Every downstream consumer (Tier 1 interpretation, Tier 2 structural analysis, gRPC SubscribeFrame broadcast, MCP krabnet_query_frame) receives incorrect data
+
+**Prevention:**
+- **Path-to-edge index:** For each frame, maintain a reverse index from `(source, target, edge_type)` triples to the set of materialized paths containing that edge. When an edge is deleted, look up all paths in this index and retract each one. This index is O(total_paths * avg_path_length) memory.
+- **Fallback to full re-traverse on deletion:** As a safety valve, when an edge or node is deleted, fall back to full DFS re-traverse for affected frames. Only use incremental extension for edge/node additions. This is the "conservative hybrid" approach -- incrementalism on the easy side (additions), full re-traverse on the hard side (deletions). Measure the fraction of events that are deletions; if it is low (typical for context graphs where data accumulates), this is a good tradeoff.
+- **Oracle test (MANDATORY):** After every incremental update, compare the frame's `current_state()` against a shadow frame that does full `rematerialize()` on the same graph. Any difference is a bug. Run this in debug/test builds only (it is O(full_DFS) per event, defeating the purpose of incrementalism in production).
+
+**Detection:**
+- The oracle test catches this immediately
+- In production: periodically run `rematerialize()` on a random sample of frames and compare against incremental state. Log divergences as critical errors.
+- Warning sign in development: tests pass for edge additions but fail when edge deletions are added to the test sequence
+
+**Phase to address:** This is the single most important pitfall. The incremental path extension design must have an explicit deletion strategy (path-to-edge index, or fallback to full re-traverse) decided and documented BEFORE any code is written.
 
 ---
 
-### Pitfall 3: Ring Buffer ABA Problem and Slot Reuse Races
+### Pitfall 2: Property Filter Invalidation Without Path Awareness
 
 **What goes wrong:**
-A thread reads the ring buffer head index as `i`, gets preempted, another thread(s) enqueue and dequeue enough entries to wrap the buffer so the head is `i` again, then the first thread's CAS succeeds on stale data. The thread believes nothing changed, but the slot now contains completely different data. In Krabnet's context, this could cause an event to be processed twice or a different event to be silently dropped.
+A `PropertyChanged` event modifies a node's property, causing it to no longer satisfy a hop's `Filter::PropertyEquals` or `Filter::HasProperty` constraint. The incremental logic does not retract paths that now fail the filter, because the node is still present in the graph -- only its properties changed.
 
-**Why it happens:**
-Ring buffers reuse slots by design (the write index wraps modulo capacity). With power-of-2 capacity and a raw index comparison, the ABA condition is structurally possible whenever the buffer wraps. This is especially dangerous during bursts where the buffer is near full and wrapping is frequent.
+**Why it happens in Krabnet specifically:**
+Looking at the current `dfs_collect` in `frame.rs` (lines 145-192), property filters are evaluated during DFS traversal:
+```rust
+Filter::PropertyEquals { key, value } => {
+    if graph.get_property(neighbor_id, *key) != Some(value) {
+        continue;
+    }
+}
+```
+Full re-traverse naturally re-evaluates these filters on every pass. But incremental path extension typically works at the edge level: "edge added -> extend paths" / "edge removed -> retract paths." A `PropertyChanged` event does not add or remove edges. The incremental extension logic may not even be triggered for property changes, leaving stale paths that no longer match the hop filter.
 
-**How to avoid:**
-- **Use monotonic 64-bit counters that never wrap in practice** (a `u64` counter incrementing at 1 GHz takes ~584 years to overflow). The actual slot index is `counter % capacity`, but the CAS operates on the full 64-bit counter value, making ABA impossible because the counter is always strictly increasing.
-- Pre-condition: buffer capacity MUST be a power of 2 so that `counter & (capacity - 1)` gives the slot index without expensive modulo.
-- For multi-producer scenarios (future): use a reserve-commit protocol where the producer (1) atomically increments a "reserved" counter via CAS, (2) writes data to the slot, (3) atomically updates a "committed" counter. Consumers only read up to the committed counter.
-- Never compare raw slot indices -- always compare full monotonic counter values.
+Conversely, a property change can also CREATE new valid paths: a node that previously failed a filter now passes it, enabling path extensions that were not possible before.
 
-**Warning signs:**
-- CAS comparisons using `index % capacity` instead of the full monotonic counter
-- Buffer capacity that is not a power of 2
-- Wrap-around arithmetic using `wrapping_add` on the slot index rather than on a 64-bit epoch
-- Stress tests that occasionally produce duplicated or missing events under high contention
+**Consequences:**
+- Paths in the frame that include nodes no longer satisfying their hop's property filter
+- Missing paths where a property change now enables a previously-blocked traversal
+- The frame's state diverges from what full `materialize()` would produce
 
-**Phase to address:**
-Ring buffer module (Phase 1). The monotonic counter design must be baked into the initial implementation. Retrofitting ABA protection is a rewrite.
+**Prevention:**
+- **Treat PropertyChanged as a potential retraction AND assertion:** When a node's property changes, identify all paths in affected frames that pass through that node. Re-evaluate the hop filter for that node at its position in each path. If the filter now fails, retract the path. If the filter now passes (and the path would have been blocked before), assert the path.
+- **Alternative: fall back to full re-traverse for PropertyChanged on filtered hops.** If the affected frame's pattern has `Filter::None` at every hop, property changes cannot affect path validity -- skip re-evaluation entirely. Only trigger re-evaluation for frames whose patterns use `PropertyEquals` or `HasProperty` at the hop position matching the changed node.
+- **Inverted index must track property-sensitive frames.** The current `InvertedIndex` (`routing.rs`) routes `PropertyChanged` events to frames by node ID. This is correct for triggering re-evaluation, but the incremental logic must then determine WHICH paths through that node are affected. This requires knowing the hop position of the node within each path.
+
+**Detection:**
+- Oracle test catches this
+- Test case: graph with node B having property `status=active`. Frame pattern requires `PropertyEquals { key: status_key, value: active }` at hop 1. Paths `[A, B, C]` are materialized. Change B's property to `status=inactive`. Verify incremental state matches empty (no valid paths), same as full re-traverse.
+
+**Phase to address:** Must be designed alongside the incremental extension logic. Cannot be deferred -- PropertyChanged events are a core event type.
 
 ---
 
-### Pitfall 4: Differential Math Edge Cases (Negative Deltas, Zero-Sum Annihilation, Compaction Errors)
+### Pitfall 3: Node Deletion Cascade Not Propagating Through All Hop Positions
 
 **What goes wrong:**
-Three distinct failure modes in the differential MVCC engine:
+A node is removed from the graph. The graph module (`graph.rs` lines 155-191) correctly cascades removal of all edges connected to the deleted node. But the incremental path extension logic handles the `NodeRemoved` event as a single retraction point, not realizing the node appeared at multiple hop positions across different paths and different frames.
 
-1. **Negative multiplicity below zero:** A retraction (-1) arrives for a tuple that was never asserted (+1), producing a multiplicity of -1. If the system treats multiplicity as unsigned or does not check for negative results after compaction, it silently corrupts the materialized view.
+**Why it happens in Krabnet specifically:**
+Node removal in `Graph::remove_node` cascades to edge removal, generating multiple effective edge deletions. But the engine (`engine.rs` line 264-265) processes `NodeRemoved` as a single event:
+```rust
+Event::NodeRemoved { node_id } => {
+    self.graph.remove_node(*node_id);
+}
+```
+The inverted index routes this to affected frames, but the incremental logic receives a node removal, not the individual edge removals. If the incremental path extension only handles `EdgeAdded`/`EdgeRemoved` events (the natural delta events for path extension), it may miss the implicit edge deletions caused by node removal.
 
-2. **Premature annihilation:** Compaction sums `+1 + (-1) = 0` and removes the tuple, but the retraction logically belonged to a different version than the assertion. If compaction crosses version boundaries incorrectly, it destroys tuples that should still be visible at intermediate versions.
+**Consequences:**
+- Same as Pitfall 1 (ghost paths), but triggered by node deletion rather than edge deletion
+- Potentially worse: a deleted node that appeared as an intermediate hop in many paths causes widespread ghost paths across multiple frames
 
-3. **Compaction frontier advancement error:** The compaction frontier advances past versions that still have outstanding reads/snapshots, destroying data that active queries still need. This is the bug documented in [differential-dataflow Issue #242](https://github.com/TimelyDataflow/differential-dataflow/issues/242) where trace wrappers inaccurately summarized frontiers.
+**Prevention:**
+- **Decompose NodeRemoved into explicit EdgeRemoved events before incremental processing.** When a `NodeRemoved` event arrives, query the graph BEFORE removing the node to enumerate all edges connected to it. Generate synthetic `EdgeRemoved` events for each. Process these through the incremental path extension logic. Then remove the node.
+- **Ordering matters:** The graph mutation (`graph.remove_node`) and the frame maintenance pass must be ordered so that edge information is available when computing retractions. Currently, `engine.rs` applies the graph mutation (step 2) before frame evaluation (step 4). For incremental path extension, the logic must capture the edges-to-be-removed BEFORE the graph mutation destroys them.
+- **Store edge list on deletion.** Before calling `self.graph.remove_node(node_id)`, query `self.graph.neighbors(node_id, Direction::Any, None)` to capture all connected edges. Use this list to drive path retractions.
 
-**Why it happens:**
-Differential dataflow's correctness depends on precise frontier tracking. The frontier defines "which versions are still distinguishable." Compaction may only merge tuples at versions that are *indistinguishable* given the current frontier. Developers often implement compaction as "sum all deltas for the same key" without respecting version ordering, which silently violates the MVCC contract.
+**Detection:**
+- Oracle test catches this
+- Test case: 3-hop path `[A, B, C, D]`. Remove node C. Verify frame retracts `[A, B, C, D]`. Then also verify: if C had incoming edges from other nodes, all paths through C are retracted across all affected frames.
 
-**How to avoid:**
-- **Use signed integers (`i64`) for multiplicities.** Assert `multiplicity >= 0` after compaction and treat violations as hard errors (panic in debug, return Error in release).
-- **Compaction must respect the frontier:** only merge deltas at versions `v1` and `v2` if `v1` and `v2` are indistinguishable according to the current compaction frontier. Two versions are indistinguishable if no outstanding capability can produce a future version that distinguishes them.
-- **Test the "retract before assert" case explicitly:** ingest a `-1` delta for a key that has no prior `+1`. The system must either reject it or track the negative multiplicity and resolve it when the matching `+1` arrives.
-- **Test cross-version compaction:** create versions [1, 2, 3], assert at v1, retract at v3, compact at frontier v2. The tuple must still be visible at v2.
-
-**Warning signs:**
-- Multiplicity stored as `u64` instead of `i64`
-- Compaction function that does not take a frontier parameter
-- Tests that only test the happy path (`+1` then `-1`) but never test out-of-order or orphaned retractions
-- Snapshot reads returning empty results for tuples that should be visible at intermediate versions
-
-**Phase to address:**
-MVCC engine (Phase 3). This is the mathematical heart of Krabnet. The compaction frontier logic must be proven correct with exhaustive property-based tests before the frame materialization layer (Phase 4) is built on top of it.
+**Phase to address:** Must be resolved in the same phase as the core incremental extension logic. The event decomposition (NodeRemoved -> EdgeRemoved cascade) should be implemented in `engine.rs` ingest pipeline before the incremental maintenance pass.
 
 ---
 
-### Pitfall 5: Graph Adjacency Inconsistency on Node/Edge Removal
+### Pitfall 4: Compaction Destroys Path History Needed for Incremental Deltas
 
 **What goes wrong:**
-Removing a node leaves dangling entries in other nodes' adjacency lists (incoming/outgoing edge references). Removing an edge updates the source node's outgoing list but not the target node's incoming list (or vice versa). Subsequent traversals follow dangling references, producing incorrect paths or panicking on invalid IDs.
+The compaction worker (`compaction.rs`) compacts a frame's DiffCollection below a frontier epoch, collapsing multiple assert/retract pairs into single entries. Later, an incremental path extension needs to determine "what paths currently exist in this frame" to compute the delta, but the pre-compaction tuple structure that would have enabled this lookup has been destroyed.
 
-**Why it happens:**
-Krabnet stores edges directly on Node structs (outgoing + incoming adjacency lists). This means every edge has TWO representations: one in the source node's outgoing list and one in the target node's incoming list. Deletion must update both atomically. With pre-allocated Vec storage and integer IDs (not pointers), a "dangling reference" is an ID pointing to a slot that has been reused for a different node -- a logical ABA problem at the graph level.
+**Why it happens in Krabnet specifically:**
+The current compaction logic (`diff.rs` lines 156-203) collapses all tuples at-or-before the frontier into a single tuple per payload with the summed delta. This means:
+- Before compaction: tuples `[(path_A, epoch=1, +1), (path_A, epoch=5, -1), (path_A, epoch=7, +1)]`
+- After compaction at frontier=6: tuples `[(path_A, epoch=6, 0)]` -- ANNIHILATED, removed entirely
+- But path_A should still be present (epoch=7 assertion is after frontier)
 
-**How to avoid:**
-- **Edge removal must be a two-phase operation:** (1) remove from source's outgoing list, (2) remove from target's incoming list. If the operation is interrupted between steps, the graph is inconsistent.
-- **Node removal must first remove all incident edges** (both outgoing and incoming), then mark the node slot as free. Never reuse a node ID slot until all references have been cleared.
-- **Generation counters on node/edge slots:** each slot has a generation counter that increments on reuse. References store `(slot_index, generation)`. A lookup checks that the generation matches; if not, the reference is stale. This is the graph-level equivalent of ABA protection.
-- **Validate adjacency symmetry in debug builds:** after every mutation, assert that for every edge `(u, v)` in `u.outgoing`, `v.incoming` also contains the corresponding entry.
+Wait -- this specific case is actually handled correctly because tuples after the frontier are preserved. The real danger is:
 
-**Warning signs:**
-- Node removal function that does not iterate `incoming` edges from other nodes
-- Edge ID reuse without generation counters
-- Traversals that silently skip missing nodes instead of treating them as errors
-- Tests that add and query but never remove and re-query
+- Incremental extension maintains intermediate state (e.g., "paths currently passing through node B at hop position 2") separate from the DiffCollection
+- Compaction operates on the DiffCollection, which may change the set of "currently active" paths
+- The incremental extension's intermediate index is now stale with respect to the compacted DiffCollection
 
-**Phase to address:**
-Property graph module (Phase 2). The adjacency consistency invariant must be established here with debug assertions. Frame materialization (Phase 4) depends entirely on traversal correctness.
+**Consequences:**
+- Incremental extension computes deltas against stale intermediate state
+- Retractions target paths that no longer exist in the compacted collection (harmless but wasteful, producing -1 on zero-net tuples and triggering compaction warnings)
+- Assertions miss paths that were collapsed during compaction (the intermediate index thinks the path still exists as individual tuples, but compaction merged them)
+
+**Prevention:**
+- **Rebuild incremental indexes after compaction.** When the compaction worker swaps a compacted DiffCollection into a frame (`frame.rs` `swap_diff_collection`), also trigger a rebuild of any incremental path indexes (path-to-edge index, hop-position index) from the compacted state.
+- **Alternative: make incremental indexes compaction-aware.** Instead of indexing individual DiffTuples, index the derived "current state" (paths with positive net delta). This state is invariant across compaction -- compaction does not change `current_state()`, only the tuple representation. Therefore, an index over `current_state()` survives compaction without rebuilding.
+- **Compaction frontier must be communicated to incremental logic.** The incremental extension must know the compaction frontier so it does not attempt to reason about tuple-level structure below the frontier.
+
+**Detection:**
+- Test case: materialize frame, apply several incremental updates, compact, then apply more incremental updates. Compare against full re-traverse. The post-compaction incremental updates must produce the same result as if no compaction had occurred.
+
+**Phase to address:** Must be designed into the incremental extension from the start. The compaction interaction is not something that can be bolted on later -- the choice of what to index (tuple-level vs current-state-level) determines the entire incremental architecture.
 
 ---
 
-### Pitfall 6: Frame Materialization DFS Traversal Errors
+### Pitfall 5: Incorrect Hop Position Tracking for Path Extension
 
 **What goes wrong:**
-The cold-start DFS traversal for frame materialization produces incorrect paths. Common failure modes: (1) cycles in the graph cause infinite traversal because visited tracking uses the wrong scope (global vs per-path), (2) multi-hop patterns miss valid paths because the hop filter is applied too early or too late, (3) directed vs undirected edge traversal is confused when following "incoming" edges in reverse.
+When a new edge `(A, B)` is added, the incremental logic must determine: "At which hop position(s) in the frame's pattern could this edge participate?" If the hop position is calculated incorrectly, the path extension either:
+- Extends from the wrong position, producing paths that do not match the hop pattern
+- Misses a valid extension because the edge was not recognized as matching the correct hop
 
-**Why it happens:**
-Krabnet's frame system performs multi-hop DFS from an anchor node following a hop pattern. DFS cycle detection requires tracking nodes on the *current path* (recursion stack), not just globally visited nodes. A globally-visited set prevents finding multiple paths through the same node, which is wrong for path enumeration. But a purely per-path visited set can cause exponential blowup in dense graphs. The correct approach depends on the frame's semantics.
+**Why it happens in Krabnet specifically:**
+A frame's pattern is a `Vec<HopSpec>` (e.g., `[H0, H1, H2]` for a 3-hop pattern). When edge `(A, B, type=T)` is added:
+- If A is the anchor node and H0 specifies `direction: Outgoing, edge_type: Some(T)`, then `[anchor, B]` is a partial path at hop 0
+- If B was already at hop position 1 in existing path `[anchor, X, B]`, and H2 could be extended from B, then... wait, B is at hop 1, so extending from B uses H2 (not H1)
 
-**How to avoid:**
-- **Distinguish "path enumeration" from "reachability":** if the frame needs all distinct paths, use per-path visited tracking. If it needs reachable nodes, use global visited. Document which semantics each frame type uses.
-- **For directed graphs, explicitly track edge direction in the hop pattern:** "hop 1: follow outgoing edges of type X, hop 2: follow incoming edges of type Y." Never default to "follow any edge."
-- **Cap traversal depth and path count** with configurable limits. A frame pattern that matches 10,000 paths in a dense graph will blow the pre-allocated buffer. Detect this and degrade gracefully (truncate or error) rather than silently producing incomplete results.
-- **Test with diamond graphs and cycles:** a diamond graph (A->B, A->C, B->D, C->D) with anchor A and depth 2 must find exactly 2 paths to D. A graph with a cycle (A->B->C->A) must terminate.
+The hop index arithmetic is: if a node is at position `p` in the path (0 = anchor), the outgoing edge from that node corresponds to hop `p` in the pattern. Getting this off by one produces paths with the wrong number of nodes, or paths where filters from the wrong hop are applied.
 
-**Warning signs:**
-- DFS implementation using `HashSet<NodeId>` as a global visited set for path collection
-- No maximum depth or path count limit
-- Tests only on tree-shaped graphs (no diamonds, no cycles)
-- Frame materialization returns different result counts between cold-start and incremental update for the same graph state
+**Consequences:**
+- Paths with wrong length (too many or too few hops)
+- Paths where an intermediate node passes the filter for the wrong hop (e.g., hop 1 filter is applied at hop 2 position)
+- Paths that should be extended are missed because the hop position lookup returns "no matching hop"
 
-**Phase to address:**
-Frame materialization module (Phase 4). Must have comprehensive graph topology test fixtures (trees, diamonds, cycles, disconnected components) before implementing.
+**Prevention:**
+- **Explicit `PathPosition` type:** Define a newtype `struct PathPosition(usize)` where 0 = anchor. The hop index for extending from position `p` is always `p` (the p-th element of `pattern`). Never use raw `usize` arithmetic on positions without the newtype.
+- **Invariant assertion:** Every materialized path `[n0, n1, ..., nk]` must satisfy `k == pattern.len()` (path length = hops + 1, where n0 is the anchor). Assert this before storing any path. If a path has wrong length, it was extended from the wrong position.
+- **Test with multi-hop patterns where different hops have different filters.** A 3-hop pattern `[H0: edge_type=A, H1: edge_type=B, H2: edge_type=C]` on a graph where edge types are mixed. Verify that only paths following the exact A -> B -> C edge type sequence are materialized.
+
+**Detection:**
+- Length assertion on every asserted path catches wrong-length paths immediately
+- Oracle test catches all path correctness issues
+
+**Phase to address:** This is a design-level decision. The path position tracking mechanism must be defined before coding incremental extension.
 
 ---
 
-### Pitfall 7: Zero-Allocation Hot Path vs Rust Ownership -- The Pre-allocation Trap
+### Pitfall 6: Partial Path State Leaking Across Epochs
 
 **What goes wrong:**
-The constraint "zero heap allocation after initialization" conflicts with Rust's ownership model in three ways: (1) pre-allocated `Vec`s used as object pools require unsafe index-based access that bypasses borrow checking, (2) returning references to pool-allocated objects requires lifetime gymnastics that either forces `unsafe` or makes the API unusable, (3) temporary scratch buffers for DFS traversal or delta accumulation must be pre-allocated and reused, but the borrow checker prevents holding a mutable reference to the scratch buffer while also reading the graph.
+The incremental extension maintains intermediate state about partial paths (e.g., "from anchor, after hop 0, these nodes are reachable: {B, C}"). This state is built up across multiple epochs as edges are added. If an edge added at epoch E extends a partial path that was built at epoch E-5, the resulting full path must be recorded at epoch E (the epoch of the completing event), not at epoch E-5. If the path's epoch is misassigned, temporal snapshots return wrong results.
 
-**Why it happens:**
-Rust's borrow checker enforces "readers OR writer" at compile time. A pre-allocated pool that hands out `&mut T` references cannot also be iterated or queried. The typical workaround is `unsafe` index-based access, which puts the correctness burden on the developer. Additionally, `Vec::push` may reallocate even if `capacity > len`, since Rust does not guarantee that `push` on a `Vec` with spare capacity is allocation-free (it is in practice, but it is not contractual).
+**Why it happens in Krabnet specifically:**
+The `DiffCollection` (`diff.rs`) is epoch-stamped: `assert_tuple(data, epoch)`. The epoch determines when the path "becomes visible" in temporal snapshots. If incremental extension finds that a new edge at epoch 10 completes a path `[A, B, C]` where `A -> B` was added at epoch 3, the full path `[A, B, C]` must be asserted at epoch 10 (the epoch when it became a complete path), not epoch 3.
 
-**How to avoid:**
-- **Use index-based APIs (arena pattern) throughout.** Functions return `NodeId` / `EdgeId` / `FrameId` (which are just `u64` indices), never `&Node` / `&Edge`. All access goes through `graph.node(id)` which does bounds-checked indexing. This eliminates borrow conflicts entirely.
-- **Pre-allocate all Vecs at startup with `Vec::with_capacity(N)` and NEVER exceed N.** Use `debug_assert!(vec.len() < vec.capacity())` before every push to catch capacity violations early. In release, if the assertion would fire, drop the oldest entry or return an error -- never silently allocate.
-- **Scratch buffers: use a `ScratchPool` struct** that owns all reusable buffers (DFS stack, delta accumulator, path collector). Borrow the specific buffer needed for each operation. The pool pattern avoids the "borrow self and self.scratch simultaneously" problem.
-- **Measure: use `#[global_allocator]` with a counting allocator in integration tests** to assert that zero allocations occur after initialization.
+But what about the reverse? If at epoch 15 the edge `A -> B` is removed, the retraction of `[A, B, C]` must happen at epoch 15. The incremental logic must track which epoch caused each path to be asserted so that the retraction has the correct epoch.
 
-**Warning signs:**
-- `Vec::push` without a preceding capacity check
-- Functions returning `&T` from a mutable pool (lifetime issues)
-- `unsafe` blocks for "the borrow checker doesn't understand this" without an index-based alternative
-- No allocation-counting test in the test suite
+**Consequences:**
+- `frame.snapshot(Epoch(8))` returns paths that should not be visible until epoch 10
+- Compaction merging tuples across incorrect epoch boundaries
+- Time-travel queries return wrong results
 
-**Phase to address:**
-Every phase, starting from Phase 1 (ring buffer). The arena/index pattern and scratch pool pattern must be established in Phase 1 and used consistently. A counting allocator test should be added in Phase 1 and run in CI.
+**Prevention:**
+- **Rule: the epoch of a path assertion/retraction is always the epoch of the event that caused it.** Not the epoch of the earliest edge in the path, and not the epoch of the latest edge. It is the epoch of the event being processed RIGHT NOW.
+- **This matches the current full-re-traverse behavior.** In the current code, `frame.materialize(&g, epoch)` records all paths at the epoch of the materialize call. Incremental extension must preserve this: all path assertions/retractions from processing event at epoch E are recorded at epoch E.
+- **Do NOT attempt to assign "birth epochs" to individual path segments.** This introduces version tracking complexity that is unnecessary and error-prone. A path either exists as a complete entity at epoch E or it does not.
+
+**Detection:**
+- Snapshot test: add edge A->B at epoch 3, add edge B->C at epoch 5 (completing 2-hop path). `snapshot(Epoch(4))` should NOT contain `[A, B, C]`. `snapshot(Epoch(5))` should contain `[A, B, C]`.
+
+**Phase to address:** Design principle to be established upfront. All incremental path assertions use the current processing epoch.
 
 ---
 
-### Pitfall 8: Bitvec Completion Tracking Off-by-One in Embryonic Frame Discovery
+## Moderate Pitfalls
 
-**What goes wrong:**
-The embryonic frame discovery system uses bitvec bit-vectors to track per-hop completion of forming patterns. Off-by-one errors in bit indexing cause: (1) a frame is promoted before all hops are satisfied (false positive -- triggers with incomplete data), (2) a frame never promotes because the final bit is never checked (false negative -- useful patterns are silently dropped), (3) bit index calculation for multi-hop patterns maps hop N to bit position N-1 but the check uses `bits.all()` which includes an uninitialized trailing bit.
-
-**Why it happens:**
-Hop patterns are 1-indexed conceptually ("hop 1, hop 2, hop 3") but bitvec is 0-indexed. A 3-hop pattern needs a 3-bit vector with bits at positions 0, 1, 2. Developers naturally write `bits.set(hop_number, true)` instead of `bits.set(hop_number - 1, true)`. The bitvec crate's strong type-system prevents out-of-bounds access, but an off-by-one that stays in-bounds produces silently wrong results.
-
-**How to avoid:**
-- **Define a `HopIndex` newtype that is always 0-based internally.** The pattern definition uses 1-based hop numbers for readability, but the conversion to `HopIndex` happens exactly once, in a single function, with an explicit `-1`.
-- **Assert `bitvec.len() == pattern.hop_count()`** when creating the completion tracker. Any mismatch is a bug.
-- **Test the boundary:** a 1-hop pattern must promote when exactly 1 bit is set. A 3-hop pattern must NOT promote when only 2 of 3 bits are set. Test with `all()` and `count_ones()` both.
-- **Use bitvec's `BitSlice::all()` rather than manual iteration** to check completion. Manual `for i in 0..len` loops are where off-by-one errors hide.
-
-**Warning signs:**
-- Raw integer arithmetic on bit indices without a newtype
-- Bitvec allocated with `len + 1` or `len - 1` (fudge factors are a code smell)
-- Tests that only check "all hops complete" but never check "N-1 hops complete should NOT promote"
-- Pattern hop numbering in docs is 1-based but code is 0-based without an explicit conversion layer
-
-**Phase to address:**
-Embryonic frame discovery module (Phase 6). The `HopIndex` newtype should be defined in the types module (Phase 1) and used from the start.
+Mistakes that cause performance problems, unnecessary complexity, or test failures but do not silently corrupt data.
 
 ---
 
-### Pitfall 9: Epoch-Based Compaction Frontier Desynchronization
+### Pitfall 7: Inverted Index Registration Mismatch After Incremental Extension
 
 **What goes wrong:**
-The compaction frontier advances past the oldest active snapshot's epoch, destroying version data that an in-flight read still needs. The read then returns incorrect results (missing tuples that should be visible at its snapshot epoch) or panics on missing version data. This is the Krabnet-specific analog of the [differential-dataflow Issue #242](https://github.com/TimelyDataflow/differential-dataflow/issues/242) compaction/frontier composition bug.
+When incremental path extension discovers new paths, the new paths may traverse nodes that were not registered in the `InvertedIndex` when the frame was initially materialized. Future events affecting these unregistered nodes will not route to the frame, causing missed incremental updates.
 
-**Why it happens:**
-Krabnet uses a monotonic epoch from the ring buffer as the version clock for MVCC. Compaction runs synchronously and advances the "since" frontier. If the frontier advancement does not account for all active snapshots (reads in progress), it over-compacts. The typical bug: the compaction function reads the current epoch and compacts everything before it, but a concurrent snapshot was taken at epoch E-2 and is still being read. The compaction destroys versions at E-2.
+**Prevention:**
+- When incremental extension discovers a new path containing new intermediate nodes, update the `InvertedIndex` to include those nodes in the frame's posting list. This means the inverted index must support dynamic expansion of a frame's registered nodes.
+- Currently, `InvertedIndex::register_frame` is called once at frame creation (`engine.rs` line 499). The inverted index needs an `update_frame_nodes` method or the frame must be unregistered and re-registered with the expanded node set.
+- Alternative: register ALL nodes in the graph's connected component reachable from the anchor (over-registration). This avoids the dynamic update problem at the cost of extra inverted index entries.
 
-**How to avoid:**
-- **Maintain an explicit "active snapshots" registry.** Every snapshot read registers its epoch in an atomic min-heap or sorted list. The compaction frontier is `min(active_snapshot_epochs) - 1`. Compaction MUST NOT advance past this.
-- **For the single-threaded PoC:** even without concurrent readers, the discipline of tracking active snapshots is essential because the engine's `ingest -> route -> interpret` pipeline may hold intermediate snapshot references across multiple operations in a single tick.
-- **Test: take a snapshot at epoch 5, ingest events up to epoch 10, run compaction, read the snapshot at epoch 5.** The read must return the same results as before compaction.
-- **Defensive: compaction should return the actual frontier it advanced to**, not assume it advanced to the requested target. Callers assert the returned frontier matches expectations.
-
-**Warning signs:**
-- Compaction function that takes no "minimum safe epoch" parameter
-- No snapshot registration mechanism
-- Tests that never interleave snapshot reads with compaction
-- Compaction always advances to `current_epoch - 1` without checking active reads
-
-**Phase to address:**
-MVCC engine (Phase 3). The active snapshot registry must be designed alongside the version chain, not bolted on after. Compaction correctness tests must be written before the frame materialization layer depends on snapshots.
+**Detection:**
+- Test case: frame initially materializes paths through nodes {A, B}. A new edge `B -> C` is added, extending paths to include node C. Then a property change on C should trigger frame re-evaluation. If C was never registered in the inverted index, the property change is silently missed.
 
 ---
 
-## Technical Debt Patterns
+### Pitfall 8: Trunk/Leaf Classification Stale After Incremental Extension
 
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| `SeqCst` everywhere instead of analyzed Acquire/Release | Faster development, fewer ordering bugs | Performance overhead on ARM; obscures actual synchronization protocol making future optimization risky | PoC only. Must document "upgrade to Acquire/Release" for each atomic before multi-threaded mode. |
-| `unsafe` index access instead of arena newtype IDs | Faster prototyping, fewer types | Every callsite is a potential out-of-bounds UB; refactoring requires touching every access | Never. The newtype costs zero runtime and prevents a class of bugs. |
-| Re-traverse for frame maintenance (not incremental) | Correctness is easier to verify | O(hops * edges) per event instead of O(affected paths) | PoC explicitly. Isolated behind trait interface for future incremental impl. |
-| `clone()` on delta collections during compaction | Avoids borrow checker fights with in-place mutation | Heap allocation on hot path; violates zero-alloc constraint | Only during initial MVCC development. Must be replaced with in-place merge before benchmarking. |
-| Synchronous compaction blocking ingestion | Simpler single-threaded model | Latency spikes on compaction; cannot scale to real-time workloads | PoC explicitly. Interface isolated for async migration. |
+**What goes wrong:**
+The trunk detection system (`trunk.rs`) classifies frames based on shared sub-paths in their patterns. When incremental path extension changes which paths are materialized in a frame, the trunk classification is not invalidated. Frames that should be pinned to Hot (because they share structural spines) may not be, or frames may remain pinned when they no longer share trunks.
 
-## Performance Traps
+**Prevention:**
+- Trunk classification operates on pattern structure (`Vec<HopSpec>`), not on materialized paths. Since incremental extension does not change the pattern (only which paths match it), trunk classification is actually invariant. This pitfall is a misconception -- but it is worth verifying that no code path inadvertently modifies the frame's pattern during incremental extension.
+- The real risk: if incremental extension is used to support "adaptive patterns" (patterns that evolve based on observed data), trunk classification would break. Ensure the frame's `pattern` field remains immutable after creation.
 
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| False sharing on ring buffer head/tail indices | Throughput plateaus with 2+ threads; perf counter shows high cache-line invalidation | Use `crossbeam_utils::CachePadded` on head, tail, and epoch atomics. Cache lines are 128 bytes on x86-64/aarch64 | Immediately with multi-producer; measurable even with single-producer if head/tail are on same cache line |
-| Linear scan of adjacency list for edge lookup | Graph mutations slow down as node degree increases | Maintain sorted adjacency lists or secondary edge-type index. Pre-allocate adjacency capacity based on expected max degree | Nodes with >100 edges (hub nodes in agent context graphs) |
-| Full DFS re-traversal on every mutation event | Frame maintenance dominates CPU time; ingestion throughput drops with more parked frames | Inverted index (signal-to-frame routing) limits re-traversal to affected frames only. Still O(hops * edges) per affected frame, but only affected frames re-traverse | >50 active parked frames, or frames with >3 hops on dense subgraphs |
-| Bitvec allocation per embryonic candidate | Heap allocation per candidate creation violates zero-alloc; GC pressure under pattern discovery bursts | Pre-allocate a pool of bitvec trackers at startup. Recycle on candidate completion/eviction | >1000 active embryonic candidates |
-| String comparison in hot-path type/property checks | Type checking becomes bottleneck; shows as high instruction count in flamegraph | String interning at ingestion boundary. All hot-path comparisons use integer type IDs and property key IDs (u32) | Any workload; strings on hot path is always wrong |
+**Detection:**
+- Assert `frame.pattern()` is unchanged after every incremental update.
 
-## "Looks Done But Isn't" Checklist
+---
 
-- [ ] **Ring buffer:** Appears to work in single-threaded tests but uses `Relaxed` ordering -- will fail under multi-producer. Verify: run under `loom` or Miri with `--cfg loom` / `cargo +nightly miri test`
-- [ ] **Graph removal:** Add/remove tests pass but only test removing leaf nodes -- verify: remove a node with both incoming and outgoing edges, then traverse from a neighbor. All adjacency lists must be consistent.
-- [ ] **Differential compaction:** Compaction "works" (reduces tuple count) but was only tested with monotonically increasing versions -- verify: test with interleaved versions, concurrent snapshots, and out-of-order retractions.
-- [ ] **Frame cold start:** DFS produces correct paths on test tree -- verify: test on diamond graph, cycle graph, disconnected graph, and graph where anchor node has zero outgoing edges.
-- [ ] **Embryonic promotion:** Candidates promote when threshold met -- verify: test that candidates do NOT promote when threshold is one bit short, and that candidates are evicted when their tracked nodes are removed.
-- [ ] **Zero allocation:** No `Vec::push` panics in tests -- verify: use a counting global allocator and assert zero allocations in the hot-path benchmark.
-- [ ] **String interning:** Property lookups work -- verify: ensure two different interning calls with the same string return the same integer ID, and that IDs from one interner are never used with a different interner instance.
+### Pitfall 9: O(all_paths) Scan Disguised as O(affected)
+
+**What goes wrong:**
+The incremental extension logic is nominally O(affected) but internally scans all existing paths in the frame to determine which ones are affected by an event. This makes the "incremental" update just as expensive as full re-traverse for frames with many paths.
+
+**Prevention:**
+- The path-to-edge index (from Pitfall 1) enables O(1) lookup of paths affected by a specific edge event, avoiding the full scan.
+- For `PropertyChanged` events, an additional index from `(NodeId, hop_position)` to affected paths enables targeted re-evaluation.
+- Profile: after implementing incremental extension, benchmark against full re-traverse on frames with 1000+ paths. If incremental is not measurably faster, something is wrong with the indexing.
+- Measure the constant factor: even with correct asymptotic complexity, the index maintenance overhead may make incremental slower than full re-traverse for small frames (< 50 paths). Use a threshold: frames below the threshold fall back to full re-traverse.
+
+**Detection:**
+- Criterion benchmark comparing `incremental_update` vs `rematerialize` for frames with 10, 100, 1000, and 10000 paths. Incremental must be faster for >= 100 paths or the optimization is not worthwhile.
+
+---
+
+### Pitfall 10: Double-Buffered Compaction Race With Incremental State
+
+**What goes wrong:**
+The background compaction worker (`compaction.rs`) uses double-buffering: clone DiffCollection under read lock, compact the clone off-lock, swap back under write lock. If incremental path extension writes new assertions/retractions to the frame between the clone and the swap, those writes are lost when the compacted (stale) collection is swapped in.
+
+**Why it happens in Krabnet specifically:**
+This is already a latent issue with the current full-re-traverse approach, but incremental extension makes it worse because incremental updates are more frequent (every event, not just events that change the graph topology). The window between clone and swap is longer for large DiffCollections.
+
+**Prevention:**
+- The current double-buffer protocol already handles this: the write lock prevents concurrent writes during the swap. But incremental updates that occur AFTER the read-lock clone and BEFORE the write-lock swap are lost.
+- **Solution: version stamp the DiffCollection.** Add a monotonic version counter to DiffCollection. On clone, record the version. On swap, check the version: if it has advanced since the clone, the compacted result is stale -- discard and retry, or merge the delta.
+- **Alternative: epoch-aware merge.** After swapping, replay any DiffTuples with epoch > compaction frontier from the old collection into the new one. Since compaction only touches tuples <= frontier, tuples > frontier are preserved in the compacted collection anyway. The real risk is tuples added during the compaction window at epochs > frontier -- these exist in the original but not the clone.
+- **Simplest fix: acquire write lock for the full duration of compaction.** This eliminates the race at the cost of blocking readers during compaction. For frames where compaction is rare (tuple count threshold is high), this may be acceptable.
+
+**Detection:**
+- Stress test: run continuous incremental updates while compaction runs. Compare frame state against oracle after every 100 events. If the race exists, the oracle will diverge after a compaction cycle.
+
+---
+
+## Minor Pitfalls
+
+Mistakes that cause test failures or minor inconsistencies but are straightforward to fix.
+
+---
+
+### Pitfall 11: Direction Reversal Bug in Backward Path Extension
+
+**What goes wrong:**
+When extending a path backward (a new edge `(X, A)` is added where A is the anchor, enabling backward extension at hop 0 if the hop direction is `Incoming`), the direction logic is inverted. An edge `(X, A)` with A as the target means X is incoming to A -- this matches `Direction::Incoming` at hop 0. Getting the direction wrong (checking A's outgoing instead of incoming) misses valid backward extensions.
+
+**Prevention:**
+- Test every `Direction` variant explicitly: `Outgoing`, `Incoming`, `Any`. For each, verify that incremental extension matches full re-traverse.
+- The existing test suite for `Graph::neighbors` covers direction filtering, but the incremental extension logic introduces a NEW place where direction must be checked. Add dedicated tests for incremental extension with each direction.
+
+---
+
+### Pitfall 12: Self-Loop Edge Creates Infinite Extension
+
+**What goes wrong:**
+A self-loop edge `(A, A)` is added. The incremental extension logic tries to extend paths through A, which loops back to A, which triggers another extension through A, ad infinitum.
+
+**Prevention:**
+- The current DFS (`frame.rs`) does not have explicit cycle detection but is naturally bounded by hop count (`hop_index >= self.pattern.len()`). Incremental extension must similarly cap extension depth at `pattern.len() - current_position`.
+- Self-loops are a special case: they should only contribute to a path if the hop pattern explicitly allows them (i.e., the hop's target type matches the current node's type).
+- Test: add self-loop on a node that appears in a 2-hop frame. Verify the frame does not produce paths with duplicate consecutive nodes (unless the pattern semantics require it).
+
+---
+
+### Pitfall 13: Empty Frame After All Paths Retracted Leaves Stale Index Entries
+
+**What goes wrong:**
+All paths in a frame are incrementally retracted (every path's net delta goes to zero). The frame is now empty but still registered in the inverted index. Events continue to route to this empty frame, triggering expensive but useless incremental processing.
+
+**Prevention:**
+- After incremental update, check `frame.net_delta() == 0` and `frame.query().is_empty()`. If true, consider the frame for eviction or deregistration from the inverted index.
+- This is not strictly a correctness issue (the empty frame produces correct empty results) but a performance issue. The inverted index routes events to frames that have no paths to maintain.
+
+---
+
+## Phase-Specific Warnings
+
+| Phase Topic | Likely Pitfall | Mitigation |
+|-------------|---------------|------------|
+| Designing the incremental extension API | Pitfall 5 (hop position off-by-one) | Define `PathPosition` newtype, assert path length == hops + 1 on every assertion |
+| Implementing edge addition handling | Pitfall 6 (epoch misassignment) | Rule: all assertions at current processing epoch, never at edge-creation epoch |
+| Implementing edge deletion handling | Pitfall 1 (ghost paths) | Path-to-edge reverse index OR fallback to full re-traverse on deletions |
+| Implementing node deletion handling | Pitfall 3 (cascade not propagating) | Decompose NodeRemoved into EdgeRemoved events BEFORE graph mutation |
+| Implementing property change handling | Pitfall 2 (filter invalidation) | Re-evaluate hop filter for all paths through changed node; skip if Filter::None at all hops |
+| Integrating with compaction | Pitfall 4 (compacted state mismatch) | Index current_state, not individual tuples; rebuild indexes after compaction swap |
+| Integrating with compaction worker | Pitfall 10 (double-buffer race) | Version-stamp DiffCollection; detect stale swaps |
+| Integrating with inverted index | Pitfall 7 (unregistered nodes) | Dynamically update inverted index when new paths traverse new nodes |
+| Performance validation | Pitfall 9 (O(all_paths) scan) | Benchmark incremental vs full re-traverse; ensure index-backed O(affected) lookup |
+| Testing strategy | All pitfalls | Oracle test: shadow full-re-traverse after every incremental update |
+
+---
+
+## Required Test Cases
+
+These tests must exist and pass before the incremental path extension feature is considered correct.
+
+### T1: Oracle Test (Full Re-Traverse Equivalence)
+
+**What:** After every incremental update, compare `frame.current_state()` against a shadow frame that runs `rematerialize()` on the same graph. Assert set equality.
+**Why:** Catches all divergence bugs (Pitfalls 1-6). This is the single most important test.
+**How:** Create a `FrameOracle` wrapper that holds two frames with identical patterns. One uses incremental extension, the other does full re-traverse. After each graph mutation, assert both produce the same `current_state()`.
+**Topology:** Run on tree, diamond, cycle, star, and disconnected graphs.
+
+### T2: Edge Deletion Retraction Completeness
+
+**What:** Build a 3-hop frame `[A, B, C, D]`. Delete edge `B -> C`. Assert that path `[A, B, C, D]` is retracted and `frame.query()` is empty.
+**Variations:** Delete first edge (A -> B), middle edge (B -> C), last edge (C -> D). Each must retract the full path.
+
+### T3: Node Deletion Cascade
+
+**What:** Build a 3-hop frame `[A, B, C, D]`. Remove node C. Assert all paths through C are retracted. Verify no ghost paths remain.
+**Variation:** C is also part of paths in OTHER frames. All affected frames must retract.
+
+### T4: Property Filter Invalidation
+
+**What:** Frame with `PropertyEquals { key: k, value: v }` at hop 1. Materialized path `[A, B, C]` where B has property `k=v`. Change B's property to `k=other_value`. Assert path `[A, B, C]` is retracted.
+**Variation:** Change B's property BACK to `k=v`. Assert path `[A, B, C]` is re-asserted.
+
+### T5: Property Filter Enablement
+
+**What:** Frame with `PropertyEquals { key: k, value: v }` at hop 1. Node B exists but does NOT have property k. Edge `A -> B -> C` exists but path is not materialized (B fails filter). Set property `k=v` on B. Assert path `[A, B, C]` is now asserted.
+
+### T6: Multi-Frame Deletion Consistency
+
+**What:** Three frames all contain paths through node X. Delete node X. Assert all three frames retract all paths through X. No frame retains ghost paths.
+
+### T7: Interleaved Compaction and Incremental Updates
+
+**What:** Materialize frame. Apply 100 incremental updates (mix of adds and deletes). Compact at epoch 50. Apply 100 more incremental updates. Compare against full re-traverse. State must match.
+
+### T8: Diamond Graph Path Counting
+
+**What:** Graph: `A -> B -> D` and `A -> C -> D` (diamond). 2-hop frame anchored at A. Both paths `[A, B, D]` and `[A, C, D]` are materialized. Delete edge `B -> D`. Assert only `[A, C, D]` remains. Re-add `B -> D`. Assert both paths return.
+
+### T9: Direction Variants
+
+**What:** Three frames with `Direction::Outgoing`, `Direction::Incoming`, and `Direction::Any` at hop 0. Same graph mutation. Each frame must produce the correct incremental result matching full re-traverse.
+
+### T10: Epoch Correctness for Snapshots
+
+**What:** Add edge A -> B at epoch 3. Add edge B -> C at epoch 7 (completing 2-hop path). Assert `snapshot(Epoch(5))` does NOT contain `[A, B, C]`. Assert `snapshot(Epoch(7))` DOES contain `[A, B, C]`.
+
+### T11: Empty Extension (No Matching Neighbors)
+
+**What:** Frame pattern requires `edge_type: Some(TypeId(100))`. Add edge with `TypeId(200)`. Assert no paths are extended (the edge does not match the hop filter). Incremental update is a no-op. State is unchanged.
+
+### T12: Concurrent Compaction Race
+
+**What:** Stress test. Spawn a thread doing continuous incremental updates. Background compaction worker active. Run for 10 seconds. Compare final state against full re-traverse oracle. Must match exactly.
+
+---
+
+## Krabnet-Specific Integration Risks
+
+### Risk: Current `engine.rs` ingest pipeline applies graph mutation BEFORE frame maintenance
+
+In the current pipeline (`engine.rs` lines 260-285), the graph is mutated first, then the inverted index is queried, then frames are evaluated. For incremental path extension with deletions, the frame maintenance needs to know WHAT was deleted. But after `graph.remove_node(node_id)` or `graph.remove_edge(edge_id)`, the deleted structure is gone from the graph. The incremental logic cannot query the graph to find "which edges did this node have?"
+
+**Mitigation:** Capture deletion information BEFORE applying the graph mutation. For `NodeRemoved`, enumerate all edges. For `EdgeRemoved`, record source/target/type. Store this in a `DeletionContext` struct that is passed to the incremental maintenance logic.
+
+### Risk: Frame evaluation currently uses read lock only (Tier 1 check)
+
+The current frame evaluation in `engine.rs` (lines 362-382) spawns scoped threads that acquire READ locks on frames to check `net_delta()`. Incremental path extension requires WRITE locks to assert/retract paths. This changes the concurrency model: write locks block readers, potentially increasing latency for `query_frame()` and `snapshot_frame()` during the maintenance pass.
+
+**Mitigation:** Keep the existing parallel evaluation for Tier 1 checks under read lock. Then, sequentially (or with a different locking strategy), apply incremental path updates under write lock. Alternatively, batch all path assertions/retractions and apply them in a single write-lock acquisition per frame.
+
+### Risk: `apply_delta` signature does not fit incremental extension output
+
+The current `Frame::apply_delta(path: Vec<NodeId>, epoch: Epoch, delta: Delta)` expects a complete path and a scalar delta. Incremental extension produces a SET of path additions and retractions. Calling `apply_delta` in a loop is correct but performs `aggregate_net_delta()` on every call (line 206 of `frame.rs`), which is O(tuples). For N incremental updates, this is O(N * tuples).
+
+**Mitigation:** Add a `Frame::apply_deltas_batch(deltas: Vec<(Vec<NodeId>, Delta)>, epoch: Epoch)` method that applies all deltas and recomputes `net_delta` once at the end.
+
+---
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Incorrect Send/Sync | HIGH | Audit every `unsafe impl`, add Miri to CI, potentially redesign type to avoid sharing UnsafeCell |
-| Wrong atomic ordering | HIGH | Re-analyze every atomic pair, add loom tests, potentially rewrite ring buffer protocol |
-| Ring buffer ABA | HIGH | Requires redesigning index scheme to monotonic counters -- touches every producer/consumer function |
-| Differential math errors | MEDIUM | Fix compaction logic, add property tests, revalidate all downstream frame materializations |
-| Graph adjacency inconsistency | MEDIUM | Add generation counters to slots, fix removal to be two-phase, add debug assertion sweep |
-| DFS traversal errors | LOW | Fix visited tracking, add topology test fixtures, re-materialize affected frames |
-| Zero-alloc violation | MEDIUM | Profile with counting allocator, replace allocating code with pre-allocated pools, may require API redesign |
-| Bitvec off-by-one | LOW | Fix index conversion, add boundary tests, re-evaluate all embryonic candidates |
-| Compaction frontier desync | HIGH | Add snapshot registry, rewrite compaction to respect frontier, re-validate all MVCC tests |
+| Ghost paths (Pitfall 1) | LOW | Fall back to `rematerialize()` for affected frames. Add oracle test to prevent regression. |
+| Property filter miss (Pitfall 2) | LOW | Fall back to `rematerialize()` for frames with property filters on affected node. |
+| Node deletion cascade (Pitfall 3) | MEDIUM | Add deletion context capture in `engine.rs`. Requires pipeline restructuring. |
+| Compaction state mismatch (Pitfall 4) | MEDIUM | Rebuild incremental indexes after compaction. Requires defining which indexes exist. |
+| Hop position off-by-one (Pitfall 5) | LOW | Fix position arithmetic. Path length assertion catches it immediately. |
+| Epoch misassignment (Pitfall 6) | LOW | Fix epoch assignment. Snapshot test catches it. |
+| Inverted index mismatch (Pitfall 7) | MEDIUM | Add dynamic index update. Requires `InvertedIndex` API extension. |
+| Double-buffer race (Pitfall 10) | HIGH | Requires DiffCollection versioning or protocol change. Touches compaction architecture. |
 
-## Pitfall-to-Phase Mapping
+---
 
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| Unsound Send/Sync | Phase 1 (ring buffer) | `cargo +nightly miri test` passes; every `unsafe impl` has `// SAFETY:` doc |
-| Atomic ordering errors | Phase 1 (ring buffer) | `loom` test suite covers all producer/consumer interleavings |
-| Ring buffer ABA | Phase 1 (ring buffer) | Monotonic 64-bit counters used; stress test with 10M enqueue/dequeue cycles shows zero duplicates/drops |
-| Differential math errors | Phase 3 (MVCC engine) | Property-based tests with `proptest`: random assertion/retraction sequences produce non-negative multiplicities after compaction |
-| Graph adjacency inconsistency | Phase 2 (property graph) | Debug-mode adjacency symmetry assertion after every mutation; removal test suite covers all topologies |
-| DFS traversal errors | Phase 4 (frame materialization) | Test fixtures for tree, diamond, cycle, disconnected, and zero-edge-anchor topologies |
-| Zero-alloc violations | Phase 1+ (all phases) | Counting allocator integration test asserts zero allocations on hot path; runs in CI |
-| Bitvec off-by-one | Phase 6 (embryonic discovery) | Boundary tests for 1-hop, N-1 of N hops, and exact-N hops completion |
-| Compaction frontier desync | Phase 3 (MVCC engine) | Snapshot-interleaved-with-compaction test; active snapshot registry design reviewed before coding |
+## Decision Framework: When to Use Incremental vs Full Re-Traverse
+
+Not all events benefit from incremental processing. The implementation should support a hybrid approach:
+
+| Event Type | Incremental Candidate? | Rationale |
+|------------|----------------------|-----------|
+| EdgeAdded | YES -- best case | Straightforward path extension: find partial paths ending at source, extend through new edge |
+| EdgeRemoved | MAYBE -- use reverse index | Requires path-to-edge index for targeted retraction. Without index, full re-traverse is safer. |
+| NodeAdded | NO -- usually no-op | Adding a node does not create new paths (no edges yet). Can skip frame maintenance entirely. |
+| NodeRemoved | PREFER full re-traverse | Cascade complexity is high. Decomposing to edge removals helps but is still complex. |
+| PropertyChanged (frame has property filter) | PREFER full re-traverse | Property changes can both create and destroy paths. Targeted re-evaluation is complex. |
+| PropertyChanged (frame has no property filter) | NO-OP | Property changes cannot affect path validity. Skip frame maintenance entirely. |
+
+**Recommendation:** Start with incremental extension for `EdgeAdded` ONLY. Use full `rematerialize()` for all other event types. This captures the dominant case (graphs grow more than they shrink) while avoiding the hardest correctness problems. Expand to edge deletion incrementalism only after the oracle test is green for all event types.
+
+---
 
 ## Sources
 
-- [The Rustonomicon: Send and Sync](https://doc.rust-lang.org/nomicon/send-and-sync.html) -- HIGH confidence
-- [Mara Bos: Rust Atomics and Locks, Chapter 3: Memory Ordering](https://mara.nl/atomics/memory-ordering.html) -- HIGH confidence
-- [SeqCst as default considered harmful (Nomicon Issue #166)](https://github.com/rust-lang/nomicon/issues/166) -- HIGH confidence
-- [nyanpasu64: An Unsafe Tour of Rust's Send and Sync](https://nyanpasu64.gitlab.io/blog/an-unsafe-tour-of-rust-s-send-and-sync/) -- MEDIUM confidence
-- [kmdreko: A Simple Lock-Free Ring Buffer](https://kmdreko.github.io/posts/20191003/a-simple-lock-free-ring-buffer/) -- MEDIUM confidence
-- [Lock-Free Rust: How to Build a Rollercoaster While It's on Fire](https://yeet.cx/blog/lock-free-rust) -- MEDIUM confidence
-- [Ferrous Systems: Lock-free ring-buffer with contiguous reservations](https://ferrous-systems.com/blog/lock-free-ring-buffer/) -- HIGH confidence
-- [differential-dataflow Issue #242: Compaction and trace wrappers do not compose](https://github.com/TimelyDataflow/differential-dataflow/issues/242) -- HIGH confidence
-- [Materialize: Building Differential Dataflow from Scratch](https://materialize.com/blog/differential-from-scratch/) -- HIGH confidence
-- [Materialize: Managing Memory with Differential Dataflow](https://materialize.com/blog/managing-memory-with-differential-dataflow/) -- HIGH confidence
-- [crossbeam-utils CachePadded documentation](https://docs.rs/crossbeam-utils/latest/crossbeam_utils/struct.CachePadded.html) -- HIGH confidence
-- [Loom: Concurrency permutation testing tool](https://docs.rs/loom/latest/loom/) -- HIGH confidence
-- [spacejam/tla-rust: Writing correct lock-free systems in Rust](https://github.com/spacejam/tla-rust) -- MEDIUM confidence
-- [Graphs and Arena Allocation in Rust](https://aminb.gitbooks.io/rust-for-c/content/graphs/index.html) -- MEDIUM confidence
-- [matklad: Fast and Simple Rust Interner](https://matklad.github.io/2020/03/22/fast-simple-rust-interner.html) -- MEDIUM confidence
-- [Cargo cyclic dep graph detection bug (PR #9075)](https://github.com/rust-lang/cargo/pull/9075) -- MEDIUM confidence (illustrates DFS visited-tracking bugs in production Rust code)
-- [bitvec crate documentation](https://docs.rs/bitvec/latest/bitvec/) -- HIGH confidence
+- [Incremental Graph Pattern Matching (Fan et al., ACM TODS 2013)](https://dl.acm.org/doi/10.1145/2489791) -- Foundational results on bounded/unbounded incremental graph matching. Proves that incremental matching for graph simulation is bounded for deletions but UNBOUNDED for insertions with general patterns. HIGH confidence.
+- [Incremental Graph Computations: Doable and Undoable (Fan et al., ACM TODS 2022)](https://dl.acm.org/doi/10.1145/3500930) -- Extends boundedness results. Shows which incremental graph computations are tractable. HIGH confidence.
+- [MV4PG: Materialized Views for Property Graphs (arXiv 2024)](https://arxiv.org/html/2411.18847v1) -- Template-based view maintenance for property graphs with variable-length edges. MEDIUM confidence.
+- [differential-dataflow Issue #242: Compaction and trace wrappers](https://github.com/TimelyDataflow/differential-dataflow/issues/242) -- Compaction frontier composition bug in reference implementation. HIGH confidence.
+- [Building Differential Dataflow from Scratch (Materialize)](https://materialize.com/blog/differential-from-scratch/) -- Differential collection model, retraction propagation. HIGH confidence.
+- [Everything About Incremental View Maintenance (materializedview.io)](https://materializedview.io/p/everything-to-know-incremental-view-maintenance) -- IVM taxonomy and correctness requirements. MEDIUM confidence.
+- Krabnet source code analysis: `frame.rs`, `diff.rs`, `graph.rs`, `engine.rs`, `compaction.rs`, `routing.rs`, `trunk.rs` -- Direct code inspection. HIGH confidence.
 
 ---
-*Pitfalls research for: Streaming graph runtime with differential MVCC in Rust*
-*Researched: 2026-02-24*
+*Pitfalls research for: Incremental path extension replacing full DFS re-traverse on frame maintenance*
+*Researched: 2026-02-26*
+*Milestone: v3.0 Tech Debt Closure + Incremental Path Extension*

@@ -1,404 +1,531 @@
-# Architecture Research
+# Architecture Research: Incremental Path Extension
 
-**Domain:** Streaming graph runtime with differential MVCC and pre-materialized traversals
-**Researched:** 2026-02-24
-**Confidence:** HIGH
+**Domain:** Incremental path extension for streaming graph runtime with differential MVCC
+**Researched:** 2026-02-26
+**Confidence:** HIGH (existing codebase thoroughly analyzed; patterns drawn from differential dataflow literature)
 
-## Standard Architecture
+## Problem Statement
+
+Currently, `Engine::ingest()` calls `Frame::materialize()` for every affected frame on every event. Materialization performs a full DFS from the anchor node across all hops, collecting all complete paths as +1 assertions. This is O(hops * branching_factor) per affected frame per event -- correct but expensive. The goal is to replace full re-traversal with **incremental path extension**: when an edge is added or removed, compute only the delta to existing paths rather than recomputing from scratch.
+
+## Current Architecture (What Exists)
 
 ### System Overview
 
-Streaming graph runtimes that pre-materialize traversal results follow a layered pipeline architecture. The canonical pattern, drawn from differential dataflow (Materialize/Timely), Netflix's real-time distributed graph, and incremental view maintenance (IVM) research, decomposes into four layers: ingestion, storage, maintenance, and serving.
+```
+Event arrives
+    |
+    v
+[Sequencer] --> [Ring Buffer] --> epoch assigned
+    |
+    v
+[Engine::ingest()]
+    |
+    +---> [Graph::add_edge/add_node/etc] -- mutate graph
+    |
+    +---> [InvertedIndex::affected_frames()] -- O(affected) routing
+    |
+    v
+[For each affected frame:]
+    |
+    +---> frame.materialize(&graph, epoch)  <-- FULL DFS RE-TRAVERSE
+    |         |
+    |         +---> dfs_collect() from anchor through all hops
+    |         +---> assert_tuple() for each complete path
+    |
+    +---> tier1_check(previous_net_delta, current_net_delta)
+    |
+    v
+[Compaction, tiering, embryonic observation...]
+```
+
+### Key Existing Components
+
+| Component | File | Role in Path Extension |
+|-----------|------|----------------------|
+| `Frame` | `frame.rs` | Holds `DiffCollection<Vec<NodeId>>`, owns `materialize()` and `apply_delta()` |
+| `Frame::dfs_collect()` | `frame.rs` | Recursive DFS helper -- the code being replaced |
+| `Frame::apply_delta()` | `frame.rs` | Already exists: asserts/retracts individual paths without re-traversal |
+| `DiffCollection<T>` | `diff.rs` | Generic differential collection with assert/retract/compact/snapshot |
+| `Engine::ingest()` | `engine.rs` | Orchestrator -- currently calls `materialize()` on affected frames |
+| `InvertedIndex` | `routing.rs` | Maps (node_id, edge_key) to frame_ids -- routes events to frames |
+| `Graph` | `graph.rs` | Adjacency-on-node storage with neighbor queries by direction/edge_type |
+| `HopSpec` | `types.rs` | Defines one hop: direction, edge_type, target_type, filter |
+| `CompactionWorker` | `compaction.rs` | Background compaction with double-buffering |
+
+### Critical Observation: `apply_delta()` Already Exists
+
+The frame already has an `apply_delta(path, epoch, delta)` method that asserts or retracts individual paths without re-traversal. The missing piece is the **logic to compute which paths to assert/retract** given a graph mutation event. Currently, the engine skips this logic and falls through to full materialization. Incremental path extension fills this gap.
+
+## Recommended Architecture: Per-Hop Delta Propagation
+
+### Core Insight: Decompose Multi-Hop into Per-Hop Joins
+
+A multi-hop path query `anchor --hop0--> N1 --hop1--> N2 --hop2--> N3` is equivalent to a multi-way join:
+
+```
+paths = hop0_results JOIN hop1_results JOIN hop2_results
+```
+
+When an edge is added/removed, it affects exactly one hop. The delta propagation strategy (from differential dataflow's delta join decomposition) is:
+
+1. Identify which hop the edge change affects
+2. For an **edge addition**: find all existing partial paths that reach the edge's source, extend them through the new edge, then continue DFS for remaining hops
+3. For an **edge removal**: find all existing complete paths that traverse the removed edge, retract them
+
+This replaces O(hops * branching_factor) full re-traversal with O(affected_paths) targeted delta computation.
+
+### New Component: `PathExtender`
+
+A new module `path_extender.rs` that computes path deltas given a graph event and a frame's pattern.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                       PUBLIC API (lib.rs)                        │
-├─────────────────────────────────────────────────────────────────┤
-│                    ORCHESTRATION LAYER                           │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │                   Engine (engine.rs)                       │  │
-│  └──────────────────────┬────────────────────────────────────┘  │
-├─────────────────────────┼───────────────────────────────────────┤
-│                  INTERPRETATION LAYER                            │
-│  ┌──────────────────┐  │  ┌──────────────────────────────────┐  │
-│  │  Interpreter     │  │  │  Frame Prioritizer               │  │
-│  │  (interpreter.rs)│  │  │  (frame_prioritizer.rs)          │  │
-│  └──────────────────┘  │  └──────────────────────────────────┘  │
-├─────────────────────────┼───────────────────────────────────────┤
-│                  MAINTENANCE LAYER                               │
-│  ┌──────────────────┐  │  ┌──────────────────┐ ┌────────────┐  │
-│  │  Frame            │  │  │  Inverted Index  │ │ Embryonic  │  │
-│  │  (frame.rs)       │  │  │  (inverted_      │ │ (embryonic │  │
-│  │                   │  │  │   index.rs)      │ │  .rs)      │  │
-│  └──────────────────┘  │  └──────────────────┘ └────────────┘  │
-├─────────────────────────┼───────────────────────────────────────┤
-│                  STORAGE LAYER                                   │
-│  ┌──────────────────┐  │  ┌──────────────────────────────────┐  │
-│  │  Graph Store      │◄─┤  │  Differential MVCC Engine        │  │
-│  │  (graph_store.rs) │  │  │  (differential.rs)               │  │
-│  └──────────────────┘  │  └──────────────────────────────────┘  │
-├─────────────────────────┼───────────────────────────────────────┤
-│                  INGESTION LAYER                                 │
-│  ┌──────────────────┐  │  ┌──────────────────────────────────┐  │
-│  │  Ring Buffer      │◄─┘  │  Sequencer                      │  │
-│  │  (ring_buffer.rs) │     │  (sequencer.rs)                  │  │
-│  └──────────────────┘     └──────────────────────────────────┘  │
-├─────────────────────────────────────────────────────────────────┤
-│                  FOUNDATION LAYER                                │
-│  ┌──────────────────┐     ┌──────────────────────────────────┐  │
-│  │  Types            │     │  Interner                        │  │
-│  │  (types.rs)       │     │  (interner.rs)                   │  │
-│  └──────────────────┘     └──────────────────────────────────┘  │
+│                    INCREMENTAL PATH EXTENSION                    │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                  PathExtender (NEW)                        │   │
+│  │                                                            │   │
+│  │  extend_edge_added(frame, graph, src, tgt, etype, epoch)  │   │
+│  │  retract_edge_removed(frame, graph, src, tgt, epoch)      │   │
+│  │  handle_node_removed(frame, graph, node_id, epoch)        │   │
+│  │  handle_property_changed(frame, graph, node_id, epoch)    │   │
+│  │                                                            │   │
+│  │  Internal:                                                 │   │
+│  │  - match_hop(hop, src, tgt, etype, graph) -> bool          │   │
+│  │  - affected_hop_index(pattern, event) -> Option<usize>     │   │
+│  │  - prefix_paths(frame, graph, up_to_hop) -> Vec<Vec<NId>>  │   │
+│  │  - suffix_extend(graph, from_node, remaining_hops)         │   │
+│  │         -> Vec<Vec<NodeId>>                                 │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                              |                                   │
+│                              v                                   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │           Frame::apply_delta() (EXISTING)                  │   │
+│  │           DiffCollection assert/retract (EXISTING)         │   │
+│  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### How Standard Systems Compare
+### Data Flow: Edge Added
 
-The dominant reference implementations in this domain are:
-
-1. **Differential Dataflow / Timely Dataflow (Rust)** — The academic gold standard for incremental computation. Collections of `(data, time, diff)` triples flow through a dataflow graph. Arrangements (indexed traces) are shared between operators. Compaction collapses old diffs. This is the closest analog to Krabnet's differential engine.
-
-2. **Materialize** — Production system built on differential dataflow. Three logical components: Storage (ingestion + persistence via Persist), Compute (differential dataflow operators on arrangements), and Adapter (SQL parsing, catalog, timestamp management). Data represented as streams of diffs, not full snapshots.
-
-3. **Netflix Real-Time Distributed Graph** — Three-layer architecture (Ingestion/Processing, Storage, Serving) handling 5M+ writes/sec over 8B nodes and 150B edges. Kafka for ingestion, Flink for processing, Cassandra-backed KVDAL for storage.
-
-4. **IVM for Property Graphs (academic)** — Research on incremental view maintenance specifically for property graph traversals with variable-length edge patterns. Pre-computes traversal results, maintains them incrementally on mutations. Speedups of 28-100x over recomputation.
-
-**Krabnet sits at the intersection of (1) and (4):** it applies differential dataflow semantics (+1/-1 deltas) specifically to property graph traversals, pre-materializing results into "frames" rather than maintaining arbitrary SQL views. This is a narrower, more opinionated design than Materialize but shares the same mathematical foundation.
-
-### Component Responsibilities
-
-| Component | Responsibility | Standard Implementation |
-|-----------|----------------|------------------------|
-| **types.rs** | Core type definitions: NodeId, EdgeId, TypeId, PropertyKey, Event, Delta, Epoch | Newtypes wrapping u64/u32. Enums for events. Zero-cost abstractions |
-| **interner.rs** | Maps string property keys and type names to integer IDs | Pre-allocated lookup table. Bidirectional: string-to-id and id-to-string. Insert-once semantics |
-| **sequencer.rs** | Global monotonic epoch counter | Single AtomicU64 with Relaxed load / fetch_add. Provides total ordering for all events |
-| **ring_buffer.rs** | Lock-free bounded event queue | SPSC or MPSC ring buffer. Power-of-two size. Head/tail with cache-padded atomics. Pre-allocated slots |
-| **graph_store.rs** | In-memory property graph with adjacency on nodes | Vec-of-nodes with inline outgoing/incoming edge lists. HashMap for properties. Type-based secondary indexes |
-| **differential.rs** | Differential MVCC engine: delta tracking, compaction, snapshots | Collection of (tuple, epoch, +1/-1) triples. Epoch-based compaction merges diffs below frontier. Multiset semantics |
-| **frame.rs** | Parked traverser definitions and materialized results | Anchor node + hop pattern + materialized result set. Cold-start via DFS, then incremental maintenance |
-| **inverted_index.rs** | Signal-to-frame routing | Inverted posting lists: NodeId/EdgeId -> Vec<FrameId>. On graph mutation, look up affected frames |
-| **frame_prioritizer.rs** | Hot/warm/cold tiering based on access patterns | Scoring function over query frequency, mutation rate, recency. Tiering determines interpretation priority |
-| **interpreter.rs** | Two-tier interpretation of frame state | Tier 1: binary delta-sum (fast, O(1)). Tier 2: structural path analysis (expensive, traversal-based) |
-| **embryonic.rs** | Pattern discovery in mutation stream | Watches for forming patterns via bitvec completion tracking. Auto-promotes to full frame at threshold |
-| **engine.rs** | Top-level orchestrator wiring all components | Owns all subsystem instances. Runs the ingest-update-maintain-interpret pipeline loop |
-| **lib.rs** | Public API surface | Re-exports Engine, types, and builder APIs. Hides internal module structure |
-
-## Recommended Project Structure
+Consider frame with pattern `[hop0, hop1, hop2]` anchored at node A, and an edge `(X, Y, etype)` is added:
 
 ```
-src/
-├── types.rs            # NodeId, EdgeId, TypeId, PropertyKey, Event, Delta, Epoch
-├── interner.rs         # StringInterner: string <-> u32 mapping
-├── sequencer.rs        # EpochSequencer: AtomicU64 monotonic counter
-├── ring_buffer.rs      # RingBuffer<T>: lock-free pre-allocated circular buffer
-├── graph_store.rs      # GraphStore: nodes, edges, adjacency, type indexes
-├── differential.rs     # DifferentialEngine: delta collection, compaction, snapshots
-├── frame.rs            # Frame, HopPattern, FrameResult: parked traverser system
-├── inverted_index.rs   # InvertedIndex: signal-to-frame routing tables
-├── frame_prioritizer.rs # FramePrioritizer: hot/warm/cold tiering
-├── interpreter.rs      # Interpreter: Tier 1 + Tier 2 frame analysis
-├── embryonic.rs        # EmbryonicDiscovery: pattern detection + auto-promotion
-├── engine.rs           # Engine: top-level orchestrator, pipeline loop
-└── lib.rs              # Public API re-exports
+1. Identify affected hop index:
+   For each hop_i in pattern:
+     Does hop_i.direction match? Does hop_i.edge_type match etype?
+     Does target_type filter pass for Y? Does property filter pass?
+     If yes -> affected_hop = i
+
+2. Find prefix paths reaching X:
+   Query frame's existing DiffCollection for paths where path[i] == X
+   (For hop 0: X must equal the anchor node)
+   OR: DFS from anchor through hops 0..i-1, collecting paths that end at X
+
+3. Extend through new edge:
+   For each prefix path ending at X:
+     Append Y to get partial path through hop i
+
+4. Complete suffix:
+   From Y, DFS through remaining hops (i+1..n) in the pattern
+   For each complete suffix: concatenate prefix + [Y] + suffix
+
+5. Assert new complete paths:
+   For each new complete path:
+     frame.apply_delta(path, epoch, Delta(+1))
 ```
 
-### Structure Rationale
+### Data Flow: Edge Removed
 
-- **Flat module layout:** 13 files in `src/` is appropriate for a single-crate PoC. No nested module directories needed at this scale. Each file maps to one architectural concern.
-- **Strict dependency ordering:** Files are listed in build-dependency order. Each module depends only on modules above it. This is a DAG, not a graph with cycles.
-- **Separation of concerns:** Ingestion (ring_buffer + sequencer), Storage (graph_store + differential), Maintenance (frame + inverted_index + embryonic), Interpretation (interpreter + frame_prioritizer), and Orchestration (engine) are cleanly separated.
+```
+1. Identify affected hop index (same as above)
+
+2. Find existing paths containing the removed edge:
+   Query frame's DiffCollection for paths where:
+     path[i] == source AND path[i+1] == target
+   (The edge at hop i connects path[i] to path[i+1])
+
+3. Retract matching paths:
+   For each matching path:
+     frame.apply_delta(path, epoch, Delta(-1))
+```
+
+### Data Flow: Node Removed
+
+```
+1. Find existing paths containing the removed node:
+   Query frame's DiffCollection for paths where:
+     any path[j] == removed_node_id
+
+2. Retract all matching paths:
+   For each matching path:
+     frame.apply_delta(path, epoch, Delta(-1))
+```
+
+### Data Flow: Property Changed
+
+```
+1. Identify which hops have property filters
+
+2. For each hop with a property filter referencing the changed node:
+   a. Find existing paths where the node at that hop position is the changed node
+   b. Check if the property filter NOW passes or NEWLY fails
+   c. If newly passes: extend (like edge added -- find prefix, complete suffix)
+   d. If newly fails: retract matching paths (like edge removed)
+```
+
+## Component Boundaries: New vs Modified
+
+### New Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `PathExtender` | `src/path_extender.rs` | Core incremental logic: computes path deltas given events |
+| `PathIndex` (optional) | Inside `frame.rs` or `path_extender.rs` | Secondary index on frame paths for fast per-position lookups |
+
+### Modified Components
+
+| Component | File | Modification |
+|-----------|------|-------------|
+| `Engine::ingest()` | `engine.rs` | Replace `frame.materialize()` call with `PathExtender` dispatch for hot/warm frames |
+| `Frame` | `frame.rs` | Add `paths_containing_node(node_id, position) -> Vec<&Vec<NodeId>>` query helper |
+| `Frame` | `frame.rs` | Add `paths_through_edge(src, tgt, hop_index) -> Vec<&Vec<NodeId>>` query helper |
+| `InvertedIndex` | `routing.rs` | Enrich `affected_frames()` to also return which hop is affected (optional optimization) |
+| `lib.rs` | `src/lib.rs` | Re-export `PathExtender` and any new public types |
+
+### Unchanged Components
+
+| Component | File | Why Unchanged |
+|-----------|------|--------------|
+| `DiffCollection` | `diff.rs` | Already generic; assert/retract paths unchanged |
+| `Graph` | `graph.rs` | Already provides all needed neighbor/property queries |
+| `HopSpec`, `Event`, other types | `types.rs` | No new types needed for core extension |
+| `CompactionWorker` | `compaction.rs` | Compaction is orthogonal to how deltas arrive |
+| `MutationCoalescer` | `coalescer.rs` | Coalescing is upstream of frame evaluation |
+| `FanOutLimiter` | `fanout.rs` | Fan-out limiting is upstream of frame evaluation |
+| `TierConfig`, `FrameActivityTracker` | `tiering.rs` | Tiering is orthogonal |
+| `Trunk detection` | `trunk.rs` | Trunk detection is orthogonal |
 
 ## Architectural Patterns
 
-### Pattern 1: Differential Collection as `(Tuple, Epoch, Diff)`
+### Pattern 1: Delta Join Decomposition (from Differential Dataflow)
 
-**What:** All state changes are represented as triples of (data, timestamp, +1 or -1). An assertion is +1, a retraction is -1. Compaction collapses annihilating pairs.
+**What:** When maintaining a multi-way join (multi-hop path), decompose updates so that a change to one input relation is joined against the current state of other relations. This avoids recomputing the entire join.
 
-**When to use:** Any system that needs incremental maintenance of derived views. This is the mathematical core of differential dataflow.
+**When to use:** Any time a multi-hop path query needs incremental maintenance. This is the mathematical foundation of Materialize's delta join strategy.
 
 **Trade-offs:**
-- Pro: Exact incremental maintenance. No approximation, no state divergence.
-- Pro: Time-travel queries for free (replay diffs up to any epoch).
-- Con: Memory pressure from accumulated diffs before compaction.
-- Con: Compaction is a critical performance concern — must be tuned.
+- Pro: Work proportional to output change, not total output size
+- Pro: Reuses existing path state (DiffCollection) as "arrangement"
+- Con: Requires ability to query existing paths by position (needs index or scan)
+- Con: More complex correctness reasoning than full re-traverse
 
-**Example:**
+**Example (Krabnet-specific):**
 ```rust
-/// A single differential update
-struct Delta {
-    tuple: FrameTuple,  // The data being asserted/retracted
-    epoch: Epoch,       // When this change happened
-    diff: i64,          // +1 = assert, -1 = retract
-}
+/// For a 3-hop pattern [hop0, hop1, hop2], edge added at hop 1:
+/// 1. Find prefix paths: existing paths truncated to [anchor, ..., node_at_hop1]
+/// 2. The new edge gives us node_at_hop2
+/// 3. Extend suffix: DFS from node_at_hop2 through hop2
+/// 4. Assert each complete path
 
-/// Compaction: collapse diffs below the compaction frontier
-fn compact(deltas: &mut Vec<Delta>, frontier: Epoch) {
-    // Group by tuple, sum diffs for epochs <= frontier
-    // Remove tuples where sum == 0 (annihilation)
-    // Replace remaining groups with single delta at frontier
+fn extend_at_hop(
+    frame: &Frame,
+    graph: &Graph,
+    hop_index: usize,
+    new_source: NodeId,
+    new_target: NodeId,
+    epoch: Epoch,
+) -> Vec<(Vec<NodeId>, Delta)> {
+    let pattern = frame.pattern();
+    let mut deltas = Vec::new();
+
+    // Find prefix paths ending at new_source
+    let prefixes = find_prefix_paths(frame, new_source, hop_index);
+
+    for prefix in prefixes {
+        // Build partial path through the new edge
+        let mut partial = prefix.clone();
+        partial.push(new_target);
+
+        // Extend through remaining hops
+        let suffixes = dfs_remaining(graph, new_target, &pattern[hop_index + 1..]);
+
+        for suffix in suffixes {
+            let mut complete = partial.clone();
+            complete.extend(suffix);
+            deltas.push((complete, Delta(1)));
+        }
+    }
+
+    deltas
 }
 ```
 
-### Pattern 2: Pre-Materialized Frames with Incremental Maintenance
+### Pattern 2: Path Position Index
 
-**What:** Instead of querying the graph at signal time, traversal results are pre-computed ("parked") as frames. When the graph mutates, only affected frames are updated via differential deltas, not recomputed from scratch.
+**What:** A secondary index on the frame's existing paths, mapping `(hop_position, node_id) -> Vec<path_index>`. Enables O(1) lookup of which existing paths pass through a given node at a given hop position.
 
-**When to use:** Systems where read latency matters more than write latency. AI context systems where signal-to-decision time is critical.
+**When to use:** When frames have many paths and scanning all paths per event is too expensive. For frames with few paths (< ~100), a linear scan is sufficient and simpler.
 
 **Trade-offs:**
-- Pro: Zero query-time traversal. Signal arrives, context is already materialized.
-- Pro: Write cost is bounded by the number of affected frames, not total frame count.
-- Con: Memory cost of materializing all active frames.
-- Con: Cold-start cost for new frames (full DFS traversal).
-- Con: Complexity of correctly propagating graph deltas through multi-hop patterns.
+- Pro: O(1) lookup for prefix/suffix path finding
+- Pro: Makes edge-removed retraction fast (no scan needed)
+- Con: Memory overhead proportional to (paths * hops)
+- Con: Must be maintained in sync with DiffCollection assertions/retractions
+- Con: Added complexity; can be deferred to optimization phase
 
-**Example:**
-```rust
-/// A parked frame: pre-materialized traversal result
-struct Frame {
-    id: FrameId,
-    anchor: NodeId,           // Starting node
-    pattern: HopPattern,      // Multi-hop traversal pattern
-    result: Vec<FrameTuple>,  // Current materialized state
-    delta_log: Vec<Delta>,    // Pending differential updates
-}
-```
+**Decision:** Start without the position index. Use linear scans over `DiffCollection::current_state()`. Add the position index as an optimization if benchmarks show scanning is the bottleneck. This follows the project's existing pattern of "correct first, fast later."
 
-### Pattern 3: Inverted Index for Signal-to-Frame Routing
+### Pattern 3: Fallback to Full Materialization
 
-**What:** An inverted index maps graph entities (nodes, edges) to the frames that reference them. When an entity is mutated, the index immediately identifies which frames need maintenance.
+**What:** For complex events that the incremental path extender cannot handle efficiently (e.g., node removal cascading to many edges, or property changes affecting hop filters at multiple positions), fall back to `Frame::rematerialize()`.
 
-**When to use:** Any system with many materialized views over shared data. Avoids scanning all frames on every mutation.
+**When to use:** When the incremental approach would produce more work than full re-traverse (e.g., a node involved in many paths is removed), or for correctness verification during development.
 
 **Trade-offs:**
-- Pro: O(1) lookup from mutation to affected frames (amortized).
-- Pro: Enables selective maintenance — only touched frames are updated.
-- Con: Must be maintained in sync with frame creation/deletion.
-- Con: Memory cost proportional to total (entity, frame) pairs.
+- Pro: Guarantees correctness as a safety net
+- Pro: Simplifies initial implementation (handle easy cases incrementally, hard cases via fallback)
+- Con: Defeats the purpose if triggered too often
+- Con: Must detect when fallback is appropriate
 
-## Data Flow
+**Decision:** Implement incremental extension for `EdgeAdded` and `EdgeRemoved` first (the common case and highest value). Property changes and node removals initially use fallback, then get incremental handling in later phases.
 
-### Primary Pipeline: Event Ingestion to Interpretation
+### Anti-Pattern: Stale Path Index
 
-```
-[External Event]
-    │
-    ▼
-[Sequencer] ─── assigns monotonic epoch ───►
-    │
-    ▼
-[Ring Buffer] ─── lock-free enqueue ───►
-    │
-    ▼
-[Engine.drain()] ─── dequeues batch ───►
-    │
-    ├──► [Graph Store] ─── applies mutation (add/remove node/edge/property) ───►
-    │         │
-    │         ▼
-    │    [Differential Engine] ─── records (+1/-1) delta at epoch ───►
-    │         │
-    │         ▼
-    │    [Inverted Index] ─── looks up affected FrameIds ───►
-    │         │
-    │         ▼
-    │    [Frame Maintenance] ─── re-traverses affected frames, diffs vs previous ───►
-    │         │
-    │         ▼
-    │    [Frame Prioritizer] ─── updates tier scores (query freq, mutation rate) ───►
-    │         │
-    │         ▼
-    │    [Interpreter] ─── Tier 1: delta-sum check. Tier 2 if significant ───►
-    │
-    └──► [Embryonic Discovery] ─── watches mutation stream for forming patterns ───►
-              │
-              ▼
-         [Auto-promote to Frame] ─── when completion threshold met
-```
+**What people do:** Build a secondary position index on paths but fail to update it when `apply_delta()` modifies the DiffCollection.
+**Why it's wrong:** The index becomes stale, leading to missing retractions or phantom extensions.
+**Do this instead:** Either rebuild the index after each batch of deltas, or couple the index updates directly to `DiffCollection::assert_tuple/retract_tuple` via a callback or wrapper.
 
-### Data Flow Detail
+### Anti-Pattern: Redundant Assertions
 
-1. **Ingestion:** External events (node/edge additions, property changes) enter via the ring buffer. The sequencer stamps each with a monotonic epoch. This is the only lock-free concurrent boundary in the system.
-
-2. **Graph Update:** The engine drains events from the ring buffer and applies them to the graph store. The graph store maintains adjacency lists on each node (both outgoing and incoming edges) for read locality. Type-based secondary indexes enable efficient pattern matching.
-
-3. **Delta Recording:** Each graph mutation is simultaneously recorded in the differential engine as a `(tuple, epoch, +1/-1)` triple. This is the MVCC layer — the graph store has "current state" while the differential engine has "complete history."
-
-4. **Frame Maintenance:** The inverted index maps mutated entities to affected frames. Each affected frame is re-traversed from its anchor node following its hop pattern. The new traversal result is diffed against the previous materialized state. New deltas are recorded. This is the expensive step and follows the "re-traverse and diff" strategy (correctness over performance for PoC).
-
-5. **Interpretation:** The frame prioritizer determines which frames warrant interpretation based on their tier (hot/warm/cold). Hot frames get interpreted on every update cycle. The interpreter runs Tier 1 (binary delta-sum: is the frame's net change nonzero?) as a fast gate. If significant, Tier 2 structural path analysis examines what changed and why.
-
-6. **Embryonic Discovery (parallel path):** Independently of the main pipeline, the embryonic discovery engine watches the mutation stream for emerging patterns. It uses bitvec completion tracking to detect when a pattern template is being "filled in" by incoming events. When completion exceeds a threshold, the embryonic frame auto-promotes to a full parked frame, and the main pipeline takes over maintenance.
-
-7. **Compaction (periodic):** The differential engine periodically compacts old deltas below a compaction frontier. Diffs that annihilate (+1 + -1 = 0) are removed. Surviving diffs are collapsed to the frontier epoch. This bounds memory growth.
-
-### Key Data Flows
-
-1. **Event ingestion flow:** External -> Sequencer -> Ring Buffer -> Engine (single-threaded drain)
-2. **Graph mutation flow:** Engine -> Graph Store (mutate) + Differential Engine (record delta)
-3. **Frame maintenance flow:** Inverted Index (lookup) -> Frame (re-traverse + diff) -> Differential Engine (record frame deltas)
-4. **Interpretation flow:** Frame Prioritizer (select) -> Interpreter (Tier 1 gate -> Tier 2 analysis)
-5. **Discovery flow:** Mutation stream -> Embryonic Engine (pattern watch) -> Frame (auto-promote)
-6. **Compaction flow:** Differential Engine (periodic compact below frontier)
-
-## Scaling Considerations
-
-| Scale | Architecture Adjustments |
-|-------|--------------------------|
-| PoC (current) | Single-threaded pipeline. Synchronous compaction. Re-traverse for frame maintenance. All in-memory. This is correct and sufficient for proving the differential math. |
-| 10K frames | Inverted index becomes critical — without it, scanning all frames per mutation is O(n). Pre-allocated Vecs for posting lists. Frame prioritizer prevents interpreting cold frames. |
-| 100K+ frames | Background compaction thread (interface already isolated). Batch multiple events before frame maintenance pass. Consider incremental path extension instead of full re-traverse. Multi-producer ring buffer for concurrent ingestion. |
-| 1M+ frames | Shard frames by anchor node locality. Partition inverted index. Parallel frame maintenance across worker threads (timely dataflow model). Disk-backed cold frames. |
-
-### Scaling Priorities
-
-1. **First bottleneck: Frame maintenance cost.** Re-traversal on every mutation is O(hops * branching_factor) per affected frame. With many frames affected by a single mutation, this dominates. Mitigation: inverted index limits scope, frame prioritizer skips cold frames, and future incremental path extension reduces traversal cost.
-2. **Second bottleneck: Differential engine memory.** Without compaction, delta history grows unboundedly. Mitigation: synchronous compaction is sufficient for PoC. Background compaction thread (with isolated interface) is the designed upgrade path.
-3. **Third bottleneck: Ring buffer throughput.** Single-consumer is fine for PoC. The atomics are already correct for multi-producer (future-proofed), so scaling ingestion means adding producers without changing the buffer.
-
-## Anti-Patterns
-
-### Anti-Pattern 1: Recomputing All Frames on Every Mutation
-
-**What people do:** On any graph change, iterate all frames and recompute them.
-**Why it's wrong:** O(total_frames) per mutation. Doesn't scale past trivial frame counts. Defeats the purpose of incremental maintenance.
-**Do this instead:** Use the inverted index to identify only affected frames. Re-traverse only those. Record differential deltas, don't recompute from scratch.
-
-### Anti-Pattern 2: Mixing Current State and History in One Structure
-
-**What people do:** Store both the "current graph" and "delta history" in the same data structure, toggling between modes.
-**Why it's wrong:** Complicates compaction, makes snapshot queries expensive, creates coupling between read-hot (graph queries) and write-hot (delta recording) paths.
-**Do this instead:** Separate the graph store (current state, optimized for adjacency traversal) from the differential engine (delta history, optimized for epoch-ordered compaction). Krabnet's architecture correctly separates these as `graph_store.rs` and `differential.rs`.
-
-### Anti-Pattern 3: String-Based Hot Path
-
-**What people do:** Use String keys for property lookups and type comparisons on every event.
-**Why it's wrong:** Heap allocation, hash computation, and cache-unfriendly access on every operation. Kills hot-path performance.
-**Do this instead:** Intern strings at ingestion time (interner.rs). Use integer IDs (u32) everywhere on the hot path. The interner is the boundary between human-readable and machine-efficient representations.
-
-### Anti-Pattern 4: Eager Interpretation of All Frame Changes
-
-**What people do:** Run the full interpretation pipeline on every frame that receives a delta.
-**Why it's wrong:** Most deltas are noise. Interpreting cold frames wastes CPU. Tier 2 structural analysis is expensive.
-**Do this instead:** Gate interpretation behind prioritization (frame_prioritizer.rs). Use Tier 1 delta-sum as a cheap filter. Only escalate to Tier 2 when the fast check indicates significance.
-
-### Anti-Pattern 5: Unbounded Delta History
-
-**What people do:** Accumulate all historical deltas without compaction, relying on "we'll compact later."
-**Why it's wrong:** Memory grows without bound. Old deltas slow down frame maintenance (must scan through irrelevant history). Compaction cost increases the longer you wait.
-**Do this instead:** Compact synchronously at well-defined points (e.g., after N events or at epoch boundaries). The compaction interface should be isolated so it can move to a background thread later, but it must run from the start.
+**What people do:** When extending paths, assert a path that already exists in the DiffCollection.
+**Why it's wrong:** Creates incorrect multiplicities. A path that should have multiplicity 1 ends up with multiplicity 2, and subsequent retraction only brings it to 1 instead of 0.
+**Do this instead:** Check DiffCollection for existing paths before asserting. Or use the hop-index to ensure the extension is only triggered by genuinely new edges (not edges that already produced the path during initial materialization).
 
 ## Integration Points
 
+### Engine::ingest() Modification
+
+The core change is in `Engine::ingest()` step 4 (frame evaluation). Currently:
+
+```rust
+// Current: full re-traverse for every affected frame
+let frame = arc.read().expect("RwLock poisoned");
+let previous = prev_deltas.get(&fid).copied().unwrap_or(0);
+let current = frame.net_delta();
+let _changed = tier1_check(previous, current);
+```
+
+This only reads the frame. The actual materialization happens at registration time. But the description from the milestone context says `frame.materialize()` is called for every affected frame on every event. Looking at the actual code, I see that `Engine::ingest()` does NOT currently re-materialize frames on each event -- it only does a read-lock tier1 check. The `materialize()` call happens at `register_frame()` time.
+
+**Revised understanding:** The engine currently does NOT incrementally update frames at all. It materializes once at registration, and the paths become stale as the graph evolves. The inverted index routes events to frames, but the current per-event handling only does a tier1 delta check -- it does not update frame state.
+
+This means `Frame::apply_delta()` exists but is never called from the engine's ingest pipeline. The entire incremental maintenance path is missing, not just the "smart" version of it.
+
+### What Needs to Be Built (Revised)
+
+The integration requires two layers:
+
+**Layer 1: Basic incremental maintenance via full re-diff**
+- After a graph mutation, for each affected frame: re-traverse (DFS) and diff against current state
+- This is the "naive" incremental approach: re-traverse + diff + apply deltas
+- This is what the original architecture doc described as "re-traverse and diff"
+
+**Layer 2: Smart incremental path extension (the optimization)**
+- Instead of full re-traverse, compute only the changed paths
+- This is the delta join decomposition approach described above
+
+Both layers use `Frame::apply_delta()` to apply results. Layer 1 is the correctness baseline; Layer 2 is the performance optimization.
+
+### Engine Integration for Layer 1 (Re-Diff)
+
+```rust
+// In Engine::ingest(), after graph mutation and inverted index lookup:
+for (fid, frame_arc) in &affected_frames {
+    let mut frame = frame_arc.write().expect("RwLock poisoned");
+    // Compute what paths SHOULD exist now
+    let mut expected_paths = Vec::new();
+    frame.dfs_collect_standalone(&graph, &[frame.anchor()], 0, &mut expected_paths);
+    // Diff against current state
+    let current = frame.query_snapshot(); // don't increment query_count
+    // Assert new paths, retract removed paths
+    for path in &expected_paths {
+        if !current.contains(path) {
+            frame.apply_delta(path.clone(), epoch, Delta(1));
+        }
+    }
+    for path in current {
+        if !expected_paths.contains(path) {
+            frame.apply_delta(path.clone(), epoch, Delta(-1));
+        }
+    }
+}
+```
+
+### Engine Integration for Layer 2 (Smart Extension)
+
+```rust
+// In Engine::ingest(), replace the re-diff with PathExtender:
+for (fid, frame_arc) in &affected_frames {
+    let deltas = PathExtender::compute_deltas(
+        &frame_arc.read().unwrap(),
+        &graph,
+        &event,
+        epoch,
+    );
+    if !deltas.is_empty() {
+        let mut frame = frame_arc.write().unwrap();
+        for (path, delta) in deltas {
+            frame.apply_delta(path, epoch, delta);
+        }
+    }
+}
+```
+
 ### Internal Boundaries
 
-| Boundary | Communication | Critical Interface |
-|----------|---------------|-------------------|
-| Sequencer -> Ring Buffer | Epoch stamped on event before enqueue | `Event` struct must carry `Epoch` field |
-| Ring Buffer -> Engine | Engine calls `drain()` or `try_pop()` | Returns `Option<Event>` or batch `&[Event]` |
-| Engine -> Graph Store | Direct method calls: `add_node()`, `add_edge()`, `set_property()` | Returns mutation result with affected entity IDs |
-| Engine -> Differential Engine | Records delta after each graph mutation | `record(tuple, epoch, diff)` |
-| Differential Engine -> Frame Maintenance | Provides delta history for frame re-traversal diffing | `deltas_since(epoch)` or `snapshot_at(epoch)` |
-| Graph Store -> Inverted Index | Inverted index is consulted after graph mutation | `lookup(entity_id) -> Vec<FrameId>` |
-| Inverted Index -> Frame | Engine drives re-traversal of identified frames | Frame exposes `re_traverse(graph_store) -> Vec<Delta>` |
-| Frame -> Frame Prioritizer | Updates tier score after maintenance | `update_score(frame_id, mutation_count, query_count)` |
-| Frame Prioritizer -> Interpreter | Selects frames for interpretation by tier | `select_hot() -> Vec<FrameId>` |
-| Mutation Stream -> Embryonic Discovery | Embryonic engine observes all mutations | Taps the same event stream as the main pipeline |
-| Embryonic -> Frame | Auto-promotes completed patterns to full frames | Creates new Frame, registers in inverted index |
+| Boundary | Communication | Notes |
+|----------|---------------|-------|
+| Engine -> PathExtender | Function call with `(&Frame, &Graph, &Event, Epoch)` | PathExtender is stateless; takes references |
+| PathExtender -> Frame | Reads `frame.pattern()` and `frame.snapshot()` | Read-only access to frame state |
+| PathExtender -> Graph | Reads `graph.neighbors()`, `get_node_type()`, `get_property()` | Read-only access to graph |
+| PathExtender output -> Frame::apply_delta() | Returns `Vec<(Vec<NodeId>, Delta)>` | Engine applies deltas to frame |
+| Engine -> Frame (write lock) | Only held during `apply_delta()` calls | Minimal write-lock duration |
 
-### Dependency Graph (Build Order)
+## Suggested Build Order
+
+Build order follows the principle: correct baseline first, then optimize.
+
+### Phase 1: Re-Diff Baseline (Layer 1)
+
+**Goal:** Frames are actually maintained incrementally (even if via full re-traverse + diff).
+
+**Tasks:**
+1. Add `Frame::snapshot_current()` that returns current paths without incrementing query_count (or use existing `snapshot(Epoch(u64::MAX))`)
+2. Add standalone DFS helper that can be called from the engine (currently `dfs_collect` is private to Frame)
+3. Modify `Engine::ingest()` to re-traverse affected frames after graph mutation and diff against current state
+4. Apply deltas via `Frame::apply_delta()`
+5. Tests: verify that frame state stays in sync with graph after mutations
+
+**Dependencies:** None -- uses all existing components.
+**Risk:** Low. This is mechanically applying existing `materialize()` logic in a diff-and-apply pattern.
+
+### Phase 2: PathExtender for EdgeAdded (Layer 2, Part 1)
+
+**Goal:** When an edge is added, compute only the new paths enabled by that edge.
+
+**Tasks:**
+1. Create `src/path_extender.rs` module
+2. Implement `affected_hop_index()`: given an event and a frame's pattern, determine which hop the event affects
+3. Implement `find_prefix_paths()`: query frame's current state for paths where `path[hop_index] == source_node`
+4. Implement `dfs_suffix()`: DFS from target node through remaining hops (reuses `dfs_collect` logic)
+5. Implement `extend_edge_added()`: orchestrates prefix lookup + suffix extension + returns delta list
+6. Wire into `Engine::ingest()` for `EdgeAdded` events (keep fallback to re-diff for other events)
+7. Tests: verify identical results to re-diff baseline for all edge-add scenarios
+
+**Dependencies:** Phase 1 (baseline for correctness verification).
+**Risk:** Medium. The prefix-path lookup and suffix-extension logic must be correct for all hop patterns.
+
+### Phase 3: PathExtender for EdgeRemoved (Layer 2, Part 2)
+
+**Goal:** When an edge is removed, compute only the paths that need retraction.
+
+**Tasks:**
+1. Implement `retract_edge_removed()`: scan existing paths for the removed edge at the affected hop position
+2. Wire into `Engine::ingest()` for `EdgeRemoved` events
+3. Tests: verify identical results to re-diff baseline
+
+**Dependencies:** Phase 2 (shares `affected_hop_index()` and module structure).
+**Risk:** Low. Path scanning and retraction is simpler than extension.
+
+### Phase 4: NodeRemoved and PropertyChanged
+
+**Goal:** Handle remaining event types incrementally.
+
+**Tasks:**
+1. Implement `handle_node_removed()`: find and retract all paths containing the removed node
+2. Implement `handle_property_changed()`: evaluate filter changes at affected hop positions
+3. Wire into `Engine::ingest()` for remaining event types
+4. Tests: verify identical results to re-diff baseline
+
+**Dependencies:** Phase 3.
+**Risk:** Medium. Property filter changes require re-evaluating hop predicates.
+
+### Phase 5: Path Position Index (Optimization)
+
+**Goal:** Speed up prefix/suffix path lookups for frames with many paths.
+
+**Tasks:**
+1. Add `PathPositionIndex` to Frame: maps `(hop_position, node_id) -> Vec<path_ref>`
+2. Maintain index in sync with `apply_delta()`
+3. Use index in PathExtender instead of linear scans
+4. Benchmark: compare with and without index at various path counts
+
+**Dependencies:** Phases 2-4 (the queries to optimize must exist first).
+**Risk:** Low. Pure optimization with clear before/after benchmarking.
+
+### Phase 6: Verification and Correctness Audit
+
+**Goal:** Ensure incremental path extension produces bit-identical results to full materialization.
+
+**Tasks:**
+1. Property-based test: for random graph mutations, compare PathExtender output with full rematerialization
+2. Stress test: high-frequency mutations with branching paths
+3. Remove re-diff fallback for events that are now handled incrementally
+4. Benchmark: measure improvement over full re-traverse at various scales
+
+**Dependencies:** All previous phases.
+**Risk:** Low if previous phases have good test coverage.
+
+### Build Order Summary
 
 ```
-types.rs ◄─── interner.rs
-    ▲              ▲
-    │              │
-sequencer.rs  ring_buffer.rs
-    ▲              ▲
-    │              │
-    └──────┬───────┘
-           │
-    graph_store.rs
-           ▲
-           │
-    differential.rs
-           ▲
-           │
-    frame.rs
-           ▲
-           │
-    inverted_index.rs
-           ▲
-           │
-    ┌──────┴───────┐
-    │              │
-frame_prioritizer.rs  embryonic.rs
-    ▲              ▲
-    │              │
-    └──────┬───────┘
-           │
-    interpreter.rs
-           ▲
-           │
-    engine.rs
-           ▲
-           │
-    lib.rs
+Phase 1: Re-Diff Baseline
+    |
+    v
+Phase 2: PathExtender for EdgeAdded
+    |
+    v
+Phase 3: PathExtender for EdgeRemoved
+    |
+    v
+Phase 4: NodeRemoved + PropertyChanged
+    |
+    v
+Phase 5: Path Position Index (optimization)
+    |
+    v
+Phase 6: Verification + Benchmarks
 ```
 
-### Build Order (Strict Sequential)
+**Phase ordering rationale:**
+- Phase 1 first because it establishes the correctness baseline that all subsequent phases are tested against
+- EdgeAdded before EdgeRemoved because extension is more complex than retraction, and addition is the more common event in growing graphs
+- NodeRemoved/PropertyChanged deferred because they are less frequent and can use re-diff fallback initially
+- Position index last because it is a pure optimization with no correctness impact
+- Verification throughout, but formal audit at the end
 
-This is the order modules should be implemented. Each module compiles and passes tests before proceeding.
+## Scaling Considerations
 
-| Phase | Module | Dependencies | Rationale |
-|-------|--------|--------------|-----------|
-| 1 | types.rs | None | Foundation types used by everything |
-| 2 | interner.rs | types.rs | String interning needed before any graph operations |
-| 3 | sequencer.rs | types.rs | Epoch counter needed by ring buffer and differential |
-| 4 | ring_buffer.rs | types.rs | Event ingestion path, uses Event from types |
-| 5 | graph_store.rs | types.rs, interner.rs | Core graph storage, uses interned type/property IDs |
-| 6 | differential.rs | types.rs | Delta collection + compaction. Epoch-aware |
-| 7 | frame.rs | types.rs, graph_store.rs, differential.rs | Parked traverser. Needs graph for traversal, differential for deltas |
-| 8 | inverted_index.rs | types.rs, frame.rs | Maps entities to frames. Needs FrameId from frame.rs |
-| 9 | frame_prioritizer.rs | types.rs, frame.rs | Tiers frames by access pattern. Needs Frame metadata |
-| 10 | interpreter.rs | types.rs, frame.rs, differential.rs | Interprets frame state. Needs Frame + deltas |
-| 11 | embryonic.rs | types.rs, frame.rs, graph_store.rs | Pattern discovery. Creates frames, reads graph |
-| 12 | engine.rs | All above | Top-level orchestrator wiring everything |
-| 13 | lib.rs | engine.rs | Public re-exports |
-
-**Critical path:** types -> graph_store -> differential -> frame -> inverted_index -> engine. This is the longest dependency chain and determines minimum build time.
-
-**Parallelizable:** sequencer.rs and ring_buffer.rs can be built in parallel (both depend only on types.rs). frame_prioritizer.rs and embryonic.rs can be built in parallel (different concerns at the same dependency depth).
-
-## Krabnet vs. Standard Patterns: Assessment
-
-| Aspect | Standard Pattern | Krabnet Design | Assessment |
-|--------|-----------------|----------------|------------|
-| Delta representation | (data, time, diff) triples | Same: (+1/-1) with epoch | Textbook differential dataflow. Correct. |
-| Ingestion | Kafka/message queue | Lock-free ring buffer | Simpler, lower-latency for in-process use. Correct for single-crate PoC. |
-| Epoch management | Logical timestamps from coordinator | AtomicU64 monotonic counter | Standard for single-node. Correct. |
-| Graph storage | External graph DB or petgraph | Custom adjacency-on-node store | Correct trade-off: read locality over write cost for a traversal-heavy system. |
-| View maintenance | Arbitrary SQL views / dataflow operators | Domain-specific "frames" with hop patterns | Narrower than Materialize but exactly right for graph traversal pre-materialization. |
-| Routing | Dataflow graph topology | Inverted index (entity -> frames) | Standard IVM technique adapted to graph setting. Correct. |
-| Compaction | Background thread with frontier tracking | Synchronous with isolated interface | Correct for PoC. Interface isolation is good forward design. |
-| Interpretation | Application-specific | Two-tier (fast gate + deep analysis) | Novel. Not from standard differential dataflow. Domain-specific optimization for AI agent context. |
-| Pattern discovery | Not standard in differential dataflow | Embryonic frame discovery with bitvec | Novel. Not from any reference system. Unique to Krabnet's use case. |
-| Concurrency | Multi-worker (timely) | Single-threaded with correct atomics | Correct for PoC. Atomics are future-proofed for multi-producer. |
-
-**Key insight:** Krabnet's architecture is a well-structured subset of differential dataflow, specialized for property graph traversals. The 13-module decomposition maps cleanly to standard layered architecture patterns. The two genuinely novel components (embryonic discovery and two-tier interpretation) are domain-specific additions for AI context systems, not replacements for standard patterns.
+| Scale | Approach |
+|-------|----------|
+| < 100 paths per frame | Linear scan of DiffCollection is fine. No position index needed. |
+| 100-10K paths per frame | Position index starts to pay off for prefix/suffix lookups. |
+| 10K+ paths per frame | Position index essential. Consider batch delta application (collect all deltas, apply in one write-lock acquisition). |
+| High-frequency events | Mutation coalescer (already exists) reduces evaluation frequency. PathExtender only runs on coalesced batches. |
+| Super-node fan-out | FanOutLimiter (already exists) caps evaluations. Deferred frames still use re-diff until drained. |
 
 ## Sources
 
-- [Differential Dataflow (GitHub)](https://github.com/TimelyDataflow/differential-dataflow) — Reference implementation of differential dataflow in Rust. HIGH confidence.
-- [Materialize Architecture Blog](https://materialize.com/blog/architecture/) — Production differential dataflow system architecture. HIGH confidence.
-- [Materialize: Incremental Computation Guide](https://materialize.com/guides/incremental-computation/) — Explains traces, arrangements, compaction. HIGH confidence.
-- [MV4PG: Materialized Views for Property Graphs](https://arxiv.org/html/2411.18847v1) — Academic work on pre-materialized traversals for property graphs. MEDIUM confidence.
-- [Incremental View Maintenance for Property Graph Queries (ACM 2018)](https://dl.acm.org/doi/abs/10.1145/3183713.3183724) — IVM specifically for property graph traversals. MEDIUM confidence.
-- [Netflix Real-Time Distributed Graph (Part 1)](https://netflixtechblog.com/how-and-why-netflix-built-a-real-time-distributed-graph-part-1-ingesting-and-processing-data-80113e124acc) — Production streaming graph: ingestion, processing, storage, serving layers. HIGH confidence.
-- [Building Differential Dataflow from Scratch (Materialize)](https://materialize.com/blog/differential-from-scratch/) — Explains differential collection model. HIGH confidence.
-- [Lock-Free Ring Buffer in Rust (Ferrous Systems)](https://ferrous-systems.com/blog/lock-free-ring-buffer/) — Ring buffer design patterns for Rust. HIGH confidence.
-- [Everything About Incremental View Maintenance](https://materializedview.io/p/everything-to-know-incremental-view-maintenance) — IVM concepts and taxonomy. MEDIUM confidence.
-- [VeilGraph: Incremental Graph Stream Processing](https://journalofbigdata.springeropen.com/articles/10.1186/s40537-022-00565-8) — Academic streaming graph processing. MEDIUM confidence.
+- [Differential Dataflow (GitHub)](https://github.com/TimelyDataflow/differential-dataflow) -- Reference implementation, delta propagation model. HIGH confidence.
+- [Frank McSherry: Differential Graph Computation](http://www.frankmcsherry.org/differential/dataflow/2015/05/12/bfs.html) -- BFS via iterate+join, 130us median response for single-edge modifications. HIGH confidence.
+- [Materialize: Delta Joins and Late Materialization](https://materialize.com/blog/delta-joins/) -- Delta join decomposition: changes to one input joined against current state of others. HIGH confidence.
+- [MV4PG: Materialized Views for Property Graphs](https://arxiv.org/html/2411.18847v1) -- Templated maintenance for variable-length edge patterns, per-hop decomposition. MEDIUM confidence.
+- [Everything About IVM](https://materializedview.io/p/everything-to-know-incremental-view-maintenance) -- IVM taxonomy and delta view trees. MEDIUM confidence.
+- [Incremental Maintenance of Materialized Path Query Views (Springer)](https://link.springer.com/chapter/10.1007/978-1-4471-0895-5_7) -- Path query view maintenance with SMX index. MEDIUM confidence.
+- Existing Krabnet codebase (`frame.rs`, `engine.rs`, `diff.rs`, `routing.rs`, `graph.rs`) -- Direct source code analysis. HIGH confidence.
 
 ---
-*Architecture research for: Streaming graph runtime with differential MVCC*
-*Researched: 2026-02-24*
+*Architecture research for: Incremental path extension in Krabnet streaming graph runtime*
+*Researched: 2026-02-26*
