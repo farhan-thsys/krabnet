@@ -137,10 +137,16 @@ fn setup_engine() -> (engine::Engine, Epoch) {
 
 /// Creates an enterprise-scale engine with 100K nodes, 1M edges, and registered frames.
 ///
+/// Hardened engine matching production config for realistic benchmarks.
 /// Used by BENCH-04 and BENCH-05. Setup is expensive so benchmarks using this
 /// should use `LargeInput` batch size.
 fn setup_scale_engine() -> (engine::Engine, u64) {
-    let mut eng = Engine::new(2048); // 2048 ring buffer for scale
+    let mut eng = Engine::with_config(
+        2048,         // ring buffer capacity (larger for scale)
+        Some(10_000), // compaction threshold
+        Some(16),     // coalescing window
+        Some(1000),   // max fanout
+    );
 
     // Add 100K nodes with alternating types
     for i in 1..=100_000u64 {
