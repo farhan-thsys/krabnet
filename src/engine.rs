@@ -57,7 +57,7 @@ use crate::ring_buffer::RingBuffer;
 use crate::routing::InvertedIndex;
 use crate::tiering::{FrameActivityTracker, HysteresisState, TierConfig};
 use crate::trunk::{detect_trunks, pinned_frame_ids};
-use crate::types::{Epoch, Event, FrameTier, HopSpec, NodeId};
+use crate::types::{Delta, Epoch, Event, FrameTier, HopSpec, NodeId};
 
 /// Aggregate statistics for the engine.
 ///
@@ -360,12 +360,14 @@ impl Engine {
             let prev_deltas = &self.previous_deltas;
             let graph_ref = &self.graph;
 
-            // Step 4: Write-lock rematerialize + tier1_check for each affected frame
+            // Step 4: Write-lock maintain + tier1_check for each affected frame
+            // EdgeAdded events use incremental path extension; all others use full rematerialize.
             let delta_updates: Vec<(u64, i64)> = Self::maintain_and_evaluate_frames(
                 &affected_frames,
                 graph_ref,
                 epoch,
                 prev_deltas,
+                &event,
             );
 
             // Merge delta updates back on main thread and update hysteresis
@@ -657,12 +659,17 @@ impl Engine {
             let prev_deltas = &self.previous_deltas;
             let graph_ref = &self.graph;
 
+            // Coalescer batches multiple events -- always rematerialize (incremental dispatch deferred).
+            // Use a non-EdgeAdded sentinel to trigger the fallback rematerialize branch.
+            let sentinel = Event::NodeRemoved { node_id: NodeId(0) };
+
             // Write-lock rematerialize + tier1_check for each affected frame
             let delta_updates: Vec<(u64, i64)> = Self::maintain_and_evaluate_frames(
                 &affected_frames,
                 graph_ref,
                 flush_epoch,
                 prev_deltas,
+                &sentinel,
             );
 
             for (fid, current) in delta_updates {
@@ -743,7 +750,8 @@ impl Engine {
     }
 
     /// Maintains and evaluates a set of frames by acquiring write locks,
-    /// re-materializing each frame from the current graph state, and running
+    /// dispatching to incremental path extension for EdgeAdded events or
+    /// full re-materialization for all other event types, and running
     /// Tier 1 delta checks.
     ///
     /// This shared helper is used by both [`ingest`](Engine::ingest) Step 4
@@ -754,8 +762,10 @@ impl Engine {
     ///
     /// * `frames` - (frame_id, frame_arc) pairs to evaluate.
     /// * `graph` - Immutable reference to the current graph state.
-    /// * `epoch` - The epoch to pass to `rematerialize`.
+    /// * `epoch` - The epoch to pass to `rematerialize` or `apply_delta`.
     /// * `prev_deltas` - Previous net_delta per frame for Tier 1 comparison.
+    /// * `event` - The event that triggered maintenance; EdgeAdded uses
+    ///   incremental path extension, all others use full rematerialize.
     ///
     /// # Returns
     ///
@@ -765,6 +775,7 @@ impl Engine {
         graph: &Graph,
         epoch: Epoch,
         prev_deltas: &HashMap<u64, i64>,
+        event: &Event,
     ) -> Vec<(u64, i64)> {
         std::thread::scope(|s| {
             let handles: Vec<std::thread::ScopedJoinHandle<'_, (u64, i64)>> = frames
@@ -774,7 +785,26 @@ impl Engine {
                     let arc: Arc<RwLock<Frame>> = Arc::clone(frame_arc);
                     s.spawn(move || {
                         let mut frame = arc.write().expect("RwLock poisoned");
-                        frame.rematerialize(graph, epoch);
+                        match event {
+                            Event::EdgeAdded { source, target, type_id, .. } => {
+                                // Incremental: compute new paths via PathExtender
+                                let deltas = crate::path_extender::extend_edge_added(
+                                    frame.anchor(),
+                                    frame.pattern(),
+                                    graph,
+                                    *source,
+                                    *target,
+                                    *type_id,
+                                );
+                                for path in deltas.new_paths {
+                                    frame.apply_delta(path, epoch, Delta(1));
+                                }
+                            }
+                            _ => {
+                                // Fallback: full re-traverse for non-EdgeAdded events
+                                frame.rematerialize(graph, epoch);
+                            }
+                        }
                         let previous = prev_deltas.get(&fid).copied().unwrap_or(0);
                         let current = frame.net_delta();
                         let _changed = tier1_check(previous, current);
