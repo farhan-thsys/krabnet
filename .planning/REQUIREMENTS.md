@@ -19,9 +19,9 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 
 ### Re-Diff Baseline
 
-- [ ] **RDIF-01**: Engine ingest pipeline wires frame state maintenance after initial materialization (frames update on every routed event, not just at registration)
-- [ ] **RDIF-02**: Frame maintenance produces correct differential state matching what full DFS re-materialization would produce at every epoch
-- [ ] **RDIF-03**: Correctness oracle test harness compares incremental result against full re-traverse for every frame update and asserts exact match
+- [x] **RDIF-01**: Engine ingest pipeline wires frame state maintenance after initial materialization (frames update on every routed event, not just at registration)
+- [x] **RDIF-02**: Frame maintenance produces correct differential state matching what full DFS re-materialization would produce at every epoch
+- [x] **RDIF-03**: Correctness oracle test harness compares incremental result against full re-traverse for every frame update and asserts exact match
 
 ### Incremental Edge Addition
 
@@ -93,9 +93,9 @@ Deferred to future release. Tracked but not in current roadmap.
 | DEBT-05 | Phase 16 | Complete |
 | DEBT-06 | Phase 16 | Complete |
 | DEBT-07 | Phase 16 | Complete |
-| RDIF-01 | Phase 17 | Pending |
-| RDIF-02 | Phase 17 | Pending |
-| RDIF-03 | Phase 17 | Pending |
+| RDIF-01 | Phase 17 | Complete |
+| RDIF-02 | Phase 17 | Complete |
+| RDIF-03 | Phase 17 | Complete |
 | IADD-01 | Phase 18 | Pending |
 | IADD-02 | Phase 18 | Pending |
 | IADD-03 | Phase 18 | Pending |

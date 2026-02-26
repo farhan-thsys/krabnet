@@ -40,7 +40,7 @@
 **Milestone Goal:** Close all v2.0 tech debt (AnthropicClient, CompactionStats, MCP WAL) and replace full DFS re-traverse frame maintenance with incremental path extension for O(affected) updates.
 
 - [x] **Phase 16: Tech Debt Closure** — Commit and verify already-built AnthropicClient, CompactionStats, and MCP WAL code (completed 2026-02-26)
-- [ ] **Phase 17: Re-Diff Baseline** — Wire frame maintenance into the ingest pipeline with full re-traverse + diff correctness oracle
+- [x] **Phase 17: Re-Diff Baseline** — Wire frame maintenance into the ingest pipeline with full re-traverse + diff correctness oracle (completed 2026-02-26)
 - [ ] **Phase 18: Incremental Edge Addition** — PathExtender module with per-hop delta derivation for EdgeAdded events
 - [ ] **Phase 19: Incremental Edge and Node Removal** — Targeted path retraction for EdgeRemoved and NodeRemoved events
 - [ ] **Phase 20: Incremental Property Change** — Filter re-evaluation for PropertyChanged events producing path assertions and retractions
@@ -70,7 +70,7 @@ Plans:
   1. After any graph mutation routed to a frame, the frame's differential state matches what a fresh full DFS materialization would produce
   2. A correctness oracle test harness exists that compares incremental frame state against full re-traverse after every update and asserts exact match
   3. Frame maintenance runs on every ingest event that routes to at least one frame (not just at registration time)
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
 - [ ] 17-01-PLAN.md — Wire frame rematerialize into ingest pipeline + correctness oracle test harness
 
@@ -140,7 +140,7 @@ Plans:
 | 14. Wire Post-Ingest Pipeline | v2.0 | 1/1 | Complete | 2026-02-26 |
 | 15. Harden MCP Binary | v2.0 | 1/1 | Complete | 2026-02-26 |
 | 16. Tech Debt Closure | 1/1 | Complete    | 2026-02-26 | - |
-| 17. Re-Diff Baseline | v3.0 | 0/1 | Planned | - |
+| 17. Re-Diff Baseline | 1/1 | Complete   | 2026-02-26 | - |
 | 18. Incremental Edge Addition | v3.0 | 0/? | Not started | - |
 | 19. Incremental Edge and Node Removal | v3.0 | 0/? | Not started | - |
 | 20. Incremental Property Change | v3.0 | 0/? | Not started | - |

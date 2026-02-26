@@ -5,24 +5,24 @@
 See: .planning/PROJECT.md (updated 2026-02-26)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 16 -- Tech Debt Closure
+**Current focus:** Phase 17 -- Re-Diff Baseline
 **Milestone:** v3.0 -- Tech Debt Closure + Incremental Path Extension
 
 ## Current Position
 
-Phase: 16 of 21 (Tech Debt Closure)
+Phase: 17 of 21 (Re-Diff Baseline)
 Plan: 1 of 1 in current phase (COMPLETE)
-Status: Phase 16 complete -- ready for Phase 17
-Last activity: 2026-02-26 -- Phase 16 tech debt closure executed
+Status: Phase 17 complete -- ready for Phase 18
+Last activity: 2026-02-26 -- Phase 17 re-diff baseline executed
 
-Progress: [████████████████░░░░] 76% (16/21 phases)
+Progress: [█████████████████░░░] 81% (17/21 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 19
-- Average duration: 5 min
-- Total execution time: 1.72 hours
+- Total plans completed: 20
+- Average duration: 6 min
+- Total execution time: 1.87 hours
 
 **By Phase:**
 
@@ -43,9 +43,10 @@ Progress: [████████████████░░░░] 76% (16
 | 14 - Wire Post-Ingest Pipeline | 1 | 16 min | 16 min |
 | 15 - Harden MCP Binary | 1 | 4 min | 4 min |
 | 16 - Tech Debt Closure | 1 | 5 min | 5 min |
+| 17 - Re-Diff Baseline | 1 | 9 min | 9 min |
 
 **Recent Trend:**
-- Last 5 plans: 0m, 4m, 6m, 4m, 5m
+- Last 5 plans: 4m, 6m, 4m, 5m, 9m
 - Trend: stable
 
 ## Accumulated Context
@@ -55,8 +56,9 @@ Progress: [████████████████░░░░] 76% (16
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- v3.0: Phase 16 tech debt code committed with 5 verification tests proving DEBT-01 through DEBT-07
-- v3.0: Used ureq for AnthropicClient sync HTTP (avoids native-tls/windows-sys conflicts)
+- v3.0: Full re-traverse (evict+DFS) on every routed event as provably-correct baseline for incremental work
+- v3.0: Oracle check uses unordered HashSet comparison of path sets for correctness verification
+- v3.0: Write lock contention resolved -- each frame appears at most once in affected set per fan-out
 - v3.0: Incremental path extension follows layered build: re-diff baseline -> EdgeAdded -> Edge/Node removal -> PropertyChanged -> benchmarks
 - v3.0: No new Cargo dependencies needed -- purely algorithmic work using existing DiffCollection and Frame::apply_delta()
 - v3.0: PathExtender is stateless module taking read-only refs to Frame, Graph, Event
@@ -69,11 +71,11 @@ None yet.
 ### Blockers/Concerns
 
 - Backward prefix resolution is O(B^K) per mutation; may need partial path cache for deep patterns (defer to v4 unless benchmarks demand it)
-- Write lock contention: incremental extension requires write locks on frames during ingest (currently read-only for tier1 check)
 - Double-buffer compaction race with incremental writes (Pitfall 10) -- design fix during Phase 21
+- Re-diff baseline is O(full_DFS) per affected frame per event; Phases 18-20 will restore O(affected) performance
 
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 16-01-PLAN.md -- Phase 16 complete, ready for Phase 17
+Stopped at: Completed 17-01-PLAN.md -- Phase 17 complete, ready for Phase 18
 Resume file: None
