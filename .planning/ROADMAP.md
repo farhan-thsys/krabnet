@@ -137,7 +137,7 @@ Plans:
 | 13. Scale and Optimize | v2.0 | 3/3 | Complete | 2026-02-24 |
 | 14. Wire Post-Ingest Pipeline | v2.0 | 1/1 | Complete | 2026-02-26 |
 | 15. Harden MCP Binary | v2.0 | 1/1 | Complete | 2026-02-26 |
-| 16. Tech Debt Closure | 1/1 | Complete   | 2026-02-26 | - |
+| 16. Tech Debt Closure | 1/1 | Complete    | 2026-02-26 | - |
 | 17. Re-Diff Baseline | v3.0 | 0/? | Not started | - |
 | 18. Incremental Edge Addition | v3.0 | 0/? | Not started | - |
 | 19. Incremental Edge and Node Removal | v3.0 | 0/? | Not started | - |
