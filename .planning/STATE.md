@@ -5,24 +5,24 @@
 See: .planning/PROJECT.md (updated 2026-02-26)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 17 -- Re-Diff Baseline
+**Current focus:** Phase 18 -- Incremental Edge Addition
 **Milestone:** v3.0 -- Tech Debt Closure + Incremental Path Extension
 
 ## Current Position
 
-Phase: 17 of 21 (Re-Diff Baseline)
-Plan: 1 of 1 in current phase (COMPLETE)
-Status: Phase 17 complete -- ready for Phase 18
-Last activity: 2026-02-26 -- Phase 17 re-diff baseline executed
+Phase: 18 of 21 (Incremental Edge Addition)
+Plan: 1 of 2 in current phase (COMPLETE)
+Status: Phase 18 Plan 01 complete -- PathExtender module created, ready for Plan 02 engine integration
+Last activity: 2026-02-26 -- Phase 18 Plan 01 PathExtender module executed
 
-Progress: [█████████████████░░░] 81% (17/21 phases)
+Progress: [██████████████████░░] 86% (18/21 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 20
+- Total plans completed: 21
 - Average duration: 6 min
-- Total execution time: 1.87 hours
+- Total execution time: 1.95 hours
 
 **By Phase:**
 
@@ -44,9 +44,10 @@ Progress: [█████████████████░░░] 81% (17
 | 15 - Harden MCP Binary | 1 | 4 min | 4 min |
 | 16 - Tech Debt Closure | 1 | 5 min | 5 min |
 | 17 - Re-Diff Baseline | 1 | 9 min | 9 min |
+| 18 - Incremental Edge Addition | 1 | 5 min | 5 min |
 
 **Recent Trend:**
-- Last 5 plans: 4m, 6m, 4m, 5m, 9m
+- Last 5 plans: 6m, 4m, 5m, 9m, 5m
 - Trend: stable
 
 ## Accumulated Context
@@ -63,6 +64,9 @@ Recent decisions affecting current work:
 - v3.0: No new Cargo dependencies needed -- purely algorithmic work using existing DiffCollection and Frame::apply_delta()
 - v3.0: PathExtender is stateless module taking read-only refs to Frame, Graph, Event
 - v3.0: DeletionContext captures edge info before graph mutation destroys adjacency
+- v3.0: PathExtender uses explicit Outgoing/Incoming/Any direction arms with edge_matches_hop_directed helper
+- v3.0: Direction::Any tries both orientations independently with separate backward prefix searches
+- v3.0: Path deduplication done post-collection via HashSet rather than inline during generation
 
 ### Pending Todos
 
@@ -77,5 +81,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 17-01-PLAN.md -- Phase 17 complete, ready for Phase 18
+Stopped at: Completed 18-01-PLAN.md -- PathExtender module created, ready for 18-02 engine integration
 Resume file: None

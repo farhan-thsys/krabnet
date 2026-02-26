@@ -25,9 +25,9 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 
 ### Incremental Edge Addition
 
-- [ ] **IADD-01**: EdgeAdded events trigger per-hop delta derivation identifying which hop in each affected frame the new edge satisfies
-- [ ] **IADD-02**: Backward prefix resolution finds existing paths from anchor to the hop before the affected edge
-- [ ] **IADD-03**: Forward path extension traverses from the new edge through remaining hops to produce complete new paths
+- [x] **IADD-01**: EdgeAdded events trigger per-hop delta derivation identifying which hop in each affected frame the new edge satisfies
+- [x] **IADD-02**: Backward prefix resolution finds existing paths from anchor to the hop before the affected edge
+- [x] **IADD-03**: Forward path extension traverses from the new edge through remaining hops to produce complete new paths
 - [ ] **IADD-04**: New paths asserted as +1 deltas via Frame::apply_delta without full DFS re-traverse
 - [ ] **IADD-05**: Incremental EdgeAdded produces identical frame state to full re-traverse (oracle verified)
 
@@ -96,9 +96,9 @@ Deferred to future release. Tracked but not in current roadmap.
 | RDIF-01 | Phase 17 | Complete |
 | RDIF-02 | Phase 17 | Complete |
 | RDIF-03 | Phase 17 | Complete |
-| IADD-01 | Phase 18 | Pending |
-| IADD-02 | Phase 18 | Pending |
-| IADD-03 | Phase 18 | Pending |
+| IADD-01 | Phase 18 | Complete |
+| IADD-02 | Phase 18 | Complete |
+| IADD-03 | Phase 18 | Complete |
 | IADD-04 | Phase 18 | Pending |
 | IADD-05 | Phase 18 | Pending |
 | IREM-01 | Phase 19 | Pending |
