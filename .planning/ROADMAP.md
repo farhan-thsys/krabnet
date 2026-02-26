@@ -125,7 +125,10 @@ Plans:
   2. Criterion benchmarks show incremental EdgeAdded and EdgeRemoved latency vs full re-traverse on multi-hop frames
   3. Stress test validates incremental correctness under sustained 50K+ events/sec with concurrent compaction
   4. All 180+ lib tests and 54+ doc-tests continue to pass with zero regressions
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 21-01-PLAN.md — Criterion benchmarks: O(affected) scaling proof + paired EdgeAdded/EdgeRemoved incremental vs rematerialize
+- [ ] 21-02-PLAN.md — Stress test with oracle verification under sustained load + full regression gate
 
 ## Progress
 
