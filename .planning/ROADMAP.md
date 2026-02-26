@@ -122,6 +122,10 @@ Plans:
   1. krabnet-mcp uses Engine::with_config() with compaction, coalescing, and fanout protection
   2. Enterprise benchmarks (BENCH-04, BENCH-05) use Engine::with_config() for realistic testing
   3. MCP binary compiles and runs correctly with hardened config
+**Plans**: 1 plan (1 wave)
+
+Plans:
+- [ ] 15-01-PLAN.md — Harden krabnet-mcp binary + update enterprise benchmarks to Engine::with_config() (Wave 1)
 
 ## Progress
 
@@ -145,4 +149,4 @@ v2.0: 11 → 12 → 13 → 14 → 15
 | 12. Production Interface | 4/4 | Complete    | 2026-02-24 |
 | 13. Scale and Optimize | 3/3 | Complete    | 2026-02-24 |
 | 14. Wire Post-Ingest Pipeline | 1/1 | Complete    | 2026-02-26 |
-| 15. Harden MCP Binary | 0/0 | Not Started | — |
+| 15. Harden MCP Binary | 0/1 | Not Started | — |
