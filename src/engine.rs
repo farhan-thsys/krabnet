@@ -483,8 +483,12 @@ impl Engine {
         let mut frame = Frame::new(frame_id, anchor, pattern.clone());
         frame.materialize(&self.graph, epoch);
 
-        // Extract all unique NodeIds from materialized paths
-        let node_ids = Self::extract_node_ids_from_frame(&mut frame);
+        // Collect all reachable nodes from the anchor through partial pattern
+        // traversal, including intermediate nodes that don't form complete paths.
+        // This ensures the inverted index covers all nodes where future EdgeAdded
+        // events could complete a path, enabling incremental routing for multi-hop
+        // patterns where edges arrive one at a time.
+        let node_ids = Self::collect_reachable_nodes(anchor, &pattern, &self.graph);
         self.index.register_frame(frame_id, &node_ids, &[]);
 
         self.previous_deltas.insert(frame_id, frame.net_delta());
@@ -847,6 +851,60 @@ impl Engine {
             }
         }
         node_ids
+    }
+
+    /// Collects all nodes reachable from `anchor` by partial DFS through
+    /// the hop pattern, including intermediate nodes that do NOT form
+    /// complete paths.
+    ///
+    /// This ensures the inverted index covers all nodes that could appear
+    /// in future complete paths, enabling incremental EdgeAdded routing
+    /// for multi-hop patterns where edges arrive one at a time.
+    fn collect_reachable_nodes(
+        anchor: NodeId,
+        pattern: &[HopSpec],
+        graph: &Graph,
+    ) -> Vec<NodeId> {
+        let mut visited = Vec::new();
+        visited.push(anchor);
+
+        // BFS/DFS layer by layer through the pattern hops
+        let mut frontier = vec![anchor];
+        for hop in pattern {
+            let mut next_frontier = Vec::new();
+            for node in &frontier {
+                let neighbors = graph.neighbors(*node, hop.direction, hop.edge_type);
+                for (_edge_id, neighbor_id) in neighbors {
+                    // Check target type filter
+                    if let Some(target_type) = hop.target_type {
+                        if graph.get_node_type(neighbor_id) != Some(target_type) {
+                            continue;
+                        }
+                    }
+                    // Check property filter
+                    match &hop.filter {
+                        crate::types::Filter::None => {}
+                        crate::types::Filter::PropertyEquals { key, value } => {
+                            if graph.get_property(neighbor_id, *key) != Some(value) {
+                                continue;
+                            }
+                        }
+                        crate::types::Filter::HasProperty { key } => {
+                            if graph.get_property(neighbor_id, *key).is_none() {
+                                continue;
+                            }
+                        }
+                    }
+                    if !visited.contains(&neighbor_id) {
+                        visited.push(neighbor_id);
+                    }
+                    next_frontier.push(neighbor_id);
+                }
+            }
+            frontier = next_frontier;
+        }
+
+        visited
     }
 }
 
@@ -2704,5 +2762,242 @@ mod tests {
         // Oracle check both again
         oracle_check(&mut engine, fid_a);
         oracle_check(&mut engine, fid_b);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Phase 18: Incremental EdgeAdded Oracle Tests
+    // ══════════════════════════════════════════════════════════════════════
+    //
+    // These tests specifically validate that the incremental PathExtender
+    // wiring in maintain_and_evaluate_frames produces identical frame state
+    // to the full DFS rematerialize baseline for EdgeAdded events.
+
+    // ── Oracle Test 7: Two-hop incremental EdgeAdded ─────────────────────
+
+    #[test]
+    fn test_oracle_incremental_two_hop_edge_added() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: nodes 1(10), 2(20), 3(30). Edge 1->2 type 100.
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(30) });
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+
+        // Register 2-hop frame: anchor=1, hop0=(Out/100/type20), hop1=(Out/200/type30)
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(200)),
+                target_type: Some(TypeId(30)),
+                filter: Filter::None,
+            },
+        ];
+        let fid = engine.register_frame(NodeId(1), pattern, reg_epoch);
+
+        // Oracle check: 0 complete paths (second hop not satisfied yet)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 0, "Should have 0 paths before second edge");
+
+        // Add edge 2->3 type 200 -- completes the 2-hop path via incremental PathExtender
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(2), target: NodeId(3), type_id: TypeId(200),
+        });
+
+        // Oracle check: incremental PathExtender should produce [1,2,3] matching full DFS
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path after adding edge 2->3");
+        assert_eq!(paths[0], vec![NodeId(1), NodeId(2), NodeId(3)]);
+    }
+
+    // ── Oracle Test 8: Multiple sequential EdgeAdded events ──────────────
+
+    #[test]
+    fn test_oracle_incremental_multiple_edge_adds() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: nodes 1(10), 2(20), 3(20)
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        let reg_epoch = engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(20) });
+
+        // Register 1-hop frame: anchor=1, hop0=(Out/100/type20)
+        let fid = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Oracle check: 0 paths (no edges yet)
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 0, "Should have 0 paths before any edges");
+
+        // Add edge 1->2 type 100 -- incremental PathExtender adds [1,2]
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 path after first edge add");
+
+        // Add edge 1->3 type 100 -- incremental PathExtender adds [1,3]
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(1), target: NodeId(3), type_id: TypeId(100),
+        });
+
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 2, "Should have 2 paths after second edge add");
+        let path_set: HashSet<Vec<NodeId>> = paths.into_iter().collect();
+        assert!(path_set.contains(&vec![NodeId(1), NodeId(2)]));
+        assert!(path_set.contains(&vec![NodeId(1), NodeId(3)]));
+    }
+
+    // ── Oracle Test 9: EdgeAdded then EdgeRemoved ────────────────────────
+
+    #[test]
+    fn test_oracle_incremental_edge_added_then_removed() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: nodes 1(10), 2(20)
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        let reg_epoch = engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+
+        // Register 1-hop frame
+        let fid = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Oracle check: 0 paths
+        oracle_check(&mut engine, fid);
+        assert_eq!(engine.query_frame(fid).unwrap().len(), 0);
+
+        // Add edge 1->2 type 100 -- incremental adds [1,2]
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+
+        // Oracle check: 1 path
+        oracle_check(&mut engine, fid);
+        assert_eq!(engine.query_frame(fid).unwrap().len(), 1, "Should have 1 path after EdgeAdded");
+
+        // Remove the edge -- falls back to full rematerialize (non-EdgeAdded event)
+        engine.ingest(Event::EdgeRemoved {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2),
+        });
+
+        // Oracle check: 0 paths -- removal correctly wipes the incremental +1 state
+        oracle_check(&mut engine, fid);
+        assert_eq!(engine.query_frame(fid).unwrap().len(), 0, "Should have 0 paths after EdgeRemoved");
+    }
+
+    // ── Oracle Test 10: Non-matching EdgeAdded produces no paths ─────────
+
+    #[test]
+    fn test_oracle_incremental_edge_added_no_match() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: nodes 1(10), 2(20)
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        let reg_epoch = engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+
+        // Register 1-hop frame with edge_type=100
+        let fid = engine.register_frame(
+            NodeId(1),
+            one_hop_pattern(TypeId(100), TypeId(20)),
+            reg_epoch,
+        );
+
+        // Oracle check: 0 paths
+        oracle_check(&mut engine, fid);
+
+        // Add edge 1->2 type 999 (doesn't match pattern's edge_type=100)
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(999),
+        });
+
+        // Oracle check: frame should still have 0 paths -- non-matching edge produces no deltas
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert!(paths.is_empty(), "Non-matching edge should produce no paths");
+    }
+
+    // ── Oracle Test 11: Three-hop middle edge connects path ──────────────
+
+    #[test]
+    fn test_oracle_incremental_three_hop_middle_edge() {
+        let mut engine = Engine::new(64);
+
+        // Build graph: nodes 1(10), 2(20), 3(30), 4(40)
+        engine.ingest(Event::NodeAdded { node_id: NodeId(1), type_id: TypeId(10) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(2), type_id: TypeId(20) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(3), type_id: TypeId(30) });
+        engine.ingest(Event::NodeAdded { node_id: NodeId(4), type_id: TypeId(40) });
+
+        // Edges: 1->2 type 100 (hop 0), 3->4 type 300 (hop 2). No hop 1 edge yet.
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(0), source: NodeId(1), target: NodeId(2), type_id: TypeId(100),
+        });
+        let reg_epoch = engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(1), source: NodeId(3), target: NodeId(4), type_id: TypeId(300),
+        });
+
+        // Register 3-hop frame: anchor=1
+        // hop0=(Out/100/type20), hop1=(Out/200/type30), hop2=(Out/300/type40)
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(200)),
+                target_type: Some(TypeId(30)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(300)),
+                target_type: Some(TypeId(40)),
+                filter: Filter::None,
+            },
+        ];
+        let fid = engine.register_frame(NodeId(1), pattern, reg_epoch);
+
+        // Oracle check: 0 paths (no complete path yet -- middle edge missing)
+        oracle_check(&mut engine, fid);
+        assert_eq!(engine.query_frame(fid).unwrap().len(), 0, "No complete path before middle edge");
+
+        // Add middle edge 2->3 type 200 (satisfies hop 1) -- incremental PathExtender
+        // should find backward prefix [1,2], extend to 3, then forward to 4 via type 300.
+        engine.ingest(Event::EdgeAdded {
+            edge_id: EdgeId(2), source: NodeId(2), target: NodeId(3), type_id: TypeId(200),
+        });
+
+        // Oracle check: should produce [1,2,3,4]
+        oracle_check(&mut engine, fid);
+        let paths = engine.query_frame(fid).unwrap();
+        assert_eq!(paths.len(), 1, "Should have 1 complete path after middle edge added");
+        assert_eq!(
+            paths[0],
+            vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4)],
+            "Path should be [1,2,3,4]"
+        );
     }
 }
