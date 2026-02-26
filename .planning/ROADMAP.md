@@ -97,7 +97,7 @@ Plans:
   2. NodeRemoved events capture edge adjacency via DeletionContext before graph mutation, then retract all paths through the removed node
   3. No ghost paths remain after any deletion event (oracle verified against full re-traverse for diamond graphs, multi-frame deletions, and cascade scenarios)
   4. Incremental removal produces identical frame state to full re-traverse baseline (oracle verified)
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
 - [ ] 19-01-PLAN.md — Add retract_edge_removed and retract_node_removed to path_extender module with unit tests
 - [ ] 19-02-PLAN.md — Wire incremental removal dispatch into engine, DeletionContext, coalescer fix, oracle tests
@@ -148,6 +148,6 @@ Plans:
 | 16. Tech Debt Closure | 1/1 | Complete    | 2026-02-26 | - |
 | 17. Re-Diff Baseline | 1/1 | Complete    | 2026-02-26 | - |
 | 18. Incremental Edge Addition | 2/2 | Complete    | 2026-02-26 | - |
-| 19. Incremental Edge and Node Removal | v3.0 | 0/? | Not started | - |
+| 19. Incremental Edge and Node Removal | 1/2 | In Progress|  | - |
 | 20. Incremental Property Change | v3.0 | 0/? | Not started | - |
 | 21. Performance and Benchmarks | v3.0 | 0/? | Not started | - |

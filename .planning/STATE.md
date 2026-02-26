@@ -5,24 +5,24 @@
 See: .planning/PROJECT.md (updated 2026-02-26)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 18 -- Incremental Edge Addition
+**Current focus:** Phase 19 -- Incremental Edge & Node Removal
 **Milestone:** v3.0 -- Tech Debt Closure + Incremental Path Extension
 
 ## Current Position
 
-Phase: 18 of 21 (Incremental Edge Addition) COMPLETE
-Plan: 2 of 2 in current phase (COMPLETE)
-Status: Phase 18 complete -- Incremental EdgeAdded wired into engine pipeline, all IADD requirements satisfied
-Last activity: 2026-02-26 -- Phase 18 Plan 02 engine integration executed
+Phase: 19 of 21 (Incremental Edge & Node Removal)
+Plan: 1 of 2 in current phase (Plan 01 COMPLETE)
+Status: Plan 01 complete -- retract_edge_removed and retract_node_removed algorithms implemented with 13 unit tests
+Last activity: 2026-02-26 -- Phase 19 Plan 01 retraction algorithms executed
 
 Progress: [██████████████████░░] 86% (18/21 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 22
+- Total plans completed: 23
 - Average duration: 6 min
-- Total execution time: 2.07 hours
+- Total execution time: 2.14 hours
 
 **By Phase:**
 
@@ -45,9 +45,10 @@ Progress: [██████████████████░░] 86% (18
 | 16 - Tech Debt Closure | 1 | 5 min | 5 min |
 | 17 - Re-Diff Baseline | 1 | 9 min | 9 min |
 | 18 - Incremental Edge Addition | 2 | 12 min | 6 min |
+| 19 - Incremental Edge & Node Removal | 1 | 4 min | 4 min |
 
 **Recent Trend:**
-- Last 5 plans: 4m, 5m, 9m, 5m, 7m
+- Last 5 plans: 5m, 9m, 5m, 7m, 4m
 - Trend: stable
 
 ## Accumulated Context
@@ -70,6 +71,9 @@ Recent decisions affecting current work:
 - v3.0: Event-based dispatch in maintain_and_evaluate_frames: EdgeAdded uses PathExtender, all others use rematerialize
 - v3.0: flush_coalescer uses NodeRemoved sentinel to force rematerialize fallback for batched events
 - v3.0: Proactive inverted index registration via collect_reachable_nodes includes all intermediate pattern nodes
+- v3.0: Parallel edge survival uses graph.neighbors() on post-removal state -- implicitly validates edge type via hop constraint
+- v3.0: Edge removal deduplicates via HashSet; node removal skips dedup since snapshot refs are unique
+- v3.0: retract_edge_removed takes pattern+graph for hop-aware checking; retract_node_removed needs only paths+node
 
 ### Pending Todos
 
@@ -84,5 +88,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 18-02-PLAN.md -- Phase 18 complete, incremental EdgeAdded wired into engine pipeline
+Stopped at: Completed 19-01-PLAN.md -- retract_edge_removed and retract_node_removed algorithms with 13 unit tests
 Resume file: None
