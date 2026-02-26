@@ -87,7 +87,7 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 - [x] **GRPC-01**: Protobuf schema defines KrabnetService with 8 RPC methods (IngestEvent, RegisterFrame, QueryFrame, SubscribeFrame, ListFrames, EvictFrame, RegisterEmbryonicTemplate, GetStats)
 - [x] **GRPC-02**: KrabnetServer implements all 8 methods with Engine held via Arc<RwLock<Engine>>
-- [x] **GRPC-03**: SubscribeFrame uses tokio::sync::broadcast for real-time frame update streaming
+- [ ] **GRPC-03**: SubscribeFrame uses tokio::sync::broadcast for real-time frame update streaming
 - [x] **GRPC-04**: build.rs compiles proto file via tonic-build
 
 ### MCP Server
@@ -98,10 +98,10 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 ### Tier 3 LLM Integration
 
-- [x] **TIER3-01**: Tier3Worker runs as separate Tokio task receiving Tier 2 results via bounded crossbeam channel (capacity: 1000)
-- [x] **TIER3-02**: Graph-aware prompt serialization converts frame paths into natural language with causal chains
-- [x] **TIER3-03**: LlmClient trait with async interpret() method; MockLlmClient for testing; AnthropicClient for production
-- [x] **TIER3-04**: Bounded channel never blocks engine — excess Tier 2 results dropped when channel full
+- [ ] **TIER3-01**: Tier3Worker runs as separate Tokio task receiving Tier 2 results via bounded crossbeam channel (capacity: 1000)
+- [ ] **TIER3-02**: Graph-aware prompt serialization converts frame paths into natural language with causal chains
+- [ ] **TIER3-03**: LlmClient trait with async interpret() method; MockLlmClient for testing; AnthropicClient for production
+- [ ] **TIER3-04**: Bounded channel never blocks engine — excess Tier 2 results dropped when channel full
 
 ### Write-Ahead Log
 
@@ -302,15 +302,15 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 | QUAL-07 | Phase 11 | Complete |
 | GRPC-01 | Phase 12 | Complete |
 | GRPC-02 | Phase 12 | Complete |
-| GRPC-03 | Phase 12 | Complete |
+| GRPC-03 | Phase 14 | Pending |
 | GRPC-04 | Phase 12 | Complete |
 | MCP-01 | Phase 12 | Complete |
 | MCP-02 | Phase 12 | Complete |
 | MCP-03 | Phase 12 | Complete |
-| TIER3-01 | Phase 12 | Complete |
-| TIER3-02 | Phase 12 | Complete |
-| TIER3-03 | Phase 12 | Complete |
-| TIER3-04 | Phase 12 | Complete |
+| TIER3-01 | Phase 14 | Pending |
+| TIER3-02 | Phase 14 | Pending |
+| TIER3-03 | Phase 14 | Pending |
+| TIER3-04 | Phase 14 | Pending |
 | WAL-01 | Phase 12 | Complete |
 | WAL-02 | Phase 12 | Complete |
 | WAL-03 | Phase 12 | Complete |
@@ -352,7 +352,7 @@ All 60 v1 requirements shipped and validated. See traceability section for phase
 
 **Coverage:**
 - v1 requirements: 60 total (all Complete)
-- v2 requirements: 67 total
+- v2 requirements: 67 total (62 Complete, 5 Pending gap closure)
 - Mapped to phases: 127
 - Unmapped: 0
 

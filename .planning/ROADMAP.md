@@ -32,6 +32,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 11: Harden the Engine** - Background compaction, multi-threaded frame eval, mutation coalescing, fan-out limits, hysteresis, stress tests (completed 2026-02-24)
 - [x] **Phase 12: Production Interface** - gRPC server (8 RPCs), MCP server (5 tools), Tier 3 LLM, WAL persistence, binary entry points (completed 2026-02-24)
 - [x] **Phase 13: Scale and Optimize** - Set-Trie inverted index, Count-Min Sketch, trunk/leaf detection, buffer pool, learned template weighting, enterprise benchmarks (completed 2026-02-24)
+- [ ] **Phase 14: Wire Post-Ingest Broadcast and Tier 3 Pipeline** - Connect SubscribeFrame broadcast and Tier 3 LLM pipeline to live ingest path (Gap Closure)
+- [ ] **Phase 15: Harden MCP Binary** - Apply Phase 11 hardening to MCP binary, fix benchmark config (Gap Closure)
 
 ## Phase Details
 
@@ -96,11 +98,32 @@ Plans:
 - [ ] 13-02-PLAN.md — Trunk/leaf detection with Hot pinning + custom buffer pool with graph-aware eviction (Wave 1)
 - [ ] 13-03-PLAN.md — Learned template weighting + enterprise benchmarks + README + quality gates (Wave 2)
 
+### Phase 14: Wire Post-Ingest Broadcast and Tier 3 Pipeline
+**Goal**: Connect SubscribeFrame broadcast and Tier 3 LLM pipeline to the live ingest path. After engine.ingest(), FrameUpdates must be sent to broadcast subscribers and Tier2Results must flow to Tier3Worker.
+**Depends on**: Phase 13
+**Requirements**: GRPC-03, TIER3-01, TIER3-02, TIER3-03, TIER3-04
+**Gap Closure:** Closes gaps from v2.0 milestone audit
+**Success Criteria** (what must be TRUE):
+  1. After gRPC ingest_event(), SubscribeFrame clients receive FrameUpdate messages
+  2. Engine or KrabnetServer holds Tier3Sender (not discarded)
+  3. After Tier 2 evaluation, Tier2Result is constructed and sent via try_send()
+  4. Integration test verifies end-to-end: ingest → broadcast + Tier 3 processing
+
+### Phase 15: Harden MCP Binary
+**Goal**: Apply Phase 11 hardening features to the MCP binary path and update enterprise benchmarks to use realistic Engine configuration.
+**Depends on**: Phase 14
+**Requirements**: COMPACT-01, COMPACT-03, COALESCE-01, FANOUT-01 (MCP path)
+**Gap Closure:** Closes gaps from v2.0 milestone audit
+**Success Criteria** (what must be TRUE):
+  1. krabnet-mcp uses Engine::with_config() with compaction, coalescing, and fanout protection
+  2. Enterprise benchmarks (BENCH-04, BENCH-05) use Engine::with_config() for realistic testing
+  3. MCP binary compiles and runs correctly with hardened config
+
 ## Progress
 
 **Execution Order:**
 v1.0: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 (complete)
-v2.0: 11 → 12 → 13
+v2.0: 11 → 12 → 13 → 14 → 15
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -117,3 +140,5 @@ v2.0: 11 → 12 → 13
 | 11. Harden the Engine | 3/3 | Complete    | 2026-02-24 |
 | 12. Production Interface | 4/4 | Complete    | 2026-02-24 |
 | 13. Scale and Optimize | 3/3 | Complete    | 2026-02-24 |
+| 14. Wire Post-Ingest Pipeline | 0/0 | Not Started | — |
+| 15. Harden MCP Binary | 0/0 | Not Started | — |
