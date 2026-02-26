@@ -144,5 +144,5 @@ v2.0: 11 → 12 → 13 → 14 → 15
 | 11. Harden the Engine | 3/3 | Complete    | 2026-02-24 |
 | 12. Production Interface | 4/4 | Complete    | 2026-02-24 |
 | 13. Scale and Optimize | 3/3 | Complete    | 2026-02-24 |
-| 14. Wire Post-Ingest Pipeline | 1/1 | Complete   | 2026-02-26 |
+| 14. Wire Post-Ingest Pipeline | 1/1 | Complete    | 2026-02-26 |
 | 15. Harden MCP Binary | 0/0 | Not Started | — |
