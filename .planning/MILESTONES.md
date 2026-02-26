@@ -20,3 +20,25 @@
 
 ---
 
+
+## v3.0 Tech Debt Closure + Incremental Path Extension (Shipped: 2026-02-27)
+
+**Phases:** 16-21 (6 phases, 10 plans)
+**Requirements:** 30/30 complete
+**Timeline:** 2026-02-26 → 2026-02-27
+
+**Key accomplishments:**
+- Closed all v2.0 tech debt: AnthropicClient LLM integration, CompactionStats in gRPC/MCP, WAL persistence with crash recovery
+- Built correctness oracle baseline: frame maintenance wired into ingest pipeline with full DFS re-traverse + diff oracle (6 scenarios)
+- Created PathExtender module (1,799 lines): incremental EdgeAdded path extension via backward prefix + forward extension algorithm
+- Implemented incremental removal: EdgeRemoved and NodeRemoved retract affected paths as -1 deltas with parallel-edge survival and DeletionContext
+- Added incremental PropertyChanged: hop filter re-evaluation with combined retract+assert for atomicity
+- Proved O(affected) scaling: Criterion benchmarks at 3 graph scales + 500K-event stress test at 74K events/sec with oracle verification
+- All event types except NodeAdded dispatched incrementally — full DFS re-traverse eliminated for EdgeAdded, EdgeRemoved, NodeRemoved, PropertyChanged
+
+**Git range:** `651d8c0` (feat(16-01)) → `68b0775` (docs(phase-21))
+**Net change:** +11,401 / -159 lines across 47 files
+**Final codebase:** 17,463 LOC Rust, 244 lib tests, 54 doc-tests, 24 benchmarks
+
+---
+
