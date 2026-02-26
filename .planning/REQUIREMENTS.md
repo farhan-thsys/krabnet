@@ -9,13 +9,13 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 
 ### Tech Debt Closure
 
-- [ ] **DEBT-01**: AnthropicClient implements LlmClient trait using ureq HTTP for real Tier 3 LLM interpretation
-- [ ] **DEBT-02**: krabnet-server auto-detects ANTHROPIC_API_KEY env var and uses AnthropicClient when available, falls back to MockLlmClient with warning
-- [ ] **DEBT-03**: CompactionStats exposed via gRPC GetStats response (compactions_completed, tuples_before, tuples_after, total_compaction_time_us)
-- [ ] **DEBT-04**: CompactionStats exposed via MCP krabnet_stats tool response
-- [ ] **DEBT-05**: MCP binary supports WAL persistence with crash recovery replay on startup
-- [ ] **DEBT-06**: MCP binary persists ingest events to WAL during live operation
-- [ ] **DEBT-07**: AnthropicClient exported from lib.rs public API
+- [x] **DEBT-01**: AnthropicClient implements LlmClient trait using ureq HTTP for real Tier 3 LLM interpretation
+- [x] **DEBT-02**: krabnet-server auto-detects ANTHROPIC_API_KEY env var and uses AnthropicClient when available, falls back to MockLlmClient with warning
+- [x] **DEBT-03**: CompactionStats exposed via gRPC GetStats response (compactions_completed, tuples_before, tuples_after, total_compaction_time_us)
+- [x] **DEBT-04**: CompactionStats exposed via MCP krabnet_stats tool response
+- [x] **DEBT-05**: MCP binary supports WAL persistence with crash recovery replay on startup
+- [x] **DEBT-06**: MCP binary persists ingest events to WAL during live operation
+- [x] **DEBT-07**: AnthropicClient exported from lib.rs public API
 
 ### Re-Diff Baseline
 
@@ -86,13 +86,13 @@ Deferred to future release. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEBT-01 | Phase 16 | Pending |
-| DEBT-02 | Phase 16 | Pending |
-| DEBT-03 | Phase 16 | Pending |
-| DEBT-04 | Phase 16 | Pending |
-| DEBT-05 | Phase 16 | Pending |
-| DEBT-06 | Phase 16 | Pending |
-| DEBT-07 | Phase 16 | Pending |
+| DEBT-01 | Phase 16 | Complete |
+| DEBT-02 | Phase 16 | Complete |
+| DEBT-03 | Phase 16 | Complete |
+| DEBT-04 | Phase 16 | Complete |
+| DEBT-05 | Phase 16 | Complete |
+| DEBT-06 | Phase 16 | Complete |
+| DEBT-07 | Phase 16 | Complete |
 | RDIF-01 | Phase 17 | Pending |
 | RDIF-02 | Phase 17 | Pending |
 | RDIF-03 | Phase 17 | Pending |

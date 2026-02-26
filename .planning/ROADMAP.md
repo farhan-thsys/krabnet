@@ -39,7 +39,7 @@
 
 **Milestone Goal:** Close all v2.0 tech debt (AnthropicClient, CompactionStats, MCP WAL) and replace full DFS re-traverse frame maintenance with incremental path extension for O(affected) updates.
 
-- [ ] **Phase 16: Tech Debt Closure** — Commit and verify already-built AnthropicClient, CompactionStats, and MCP WAL code
+- [x] **Phase 16: Tech Debt Closure** — Commit and verify already-built AnthropicClient, CompactionStats, and MCP WAL code (completed 2026-02-26)
 - [ ] **Phase 17: Re-Diff Baseline** — Wire frame maintenance into the ingest pipeline with full re-traverse + diff correctness oracle
 - [ ] **Phase 18: Incremental Edge Addition** — PathExtender module with per-hop delta derivation for EdgeAdded events
 - [ ] **Phase 19: Incremental Edge and Node Removal** — Targeted path retraction for EdgeRemoved and NodeRemoved events
@@ -52,7 +52,7 @@
 **Goal**: All v2.0 tech debt items are committed, tested, and available in the public API
 **Depends on**: Phase 15
 **Requirements**: DEBT-01, DEBT-02, DEBT-03, DEBT-04, DEBT-05, DEBT-06, DEBT-07
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
 - [ ] 16-01-PLAN.md — Write verification tests for all 7 DEBT items, run full test suite, commit
 **Success Criteria** (what must be TRUE):
@@ -137,7 +137,7 @@ Plans:
 | 13. Scale and Optimize | v2.0 | 3/3 | Complete | 2026-02-24 |
 | 14. Wire Post-Ingest Pipeline | v2.0 | 1/1 | Complete | 2026-02-26 |
 | 15. Harden MCP Binary | v2.0 | 1/1 | Complete | 2026-02-26 |
-| 16. Tech Debt Closure | v3.0 | 0/1 | In progress | - |
+| 16. Tech Debt Closure | 1/1 | Complete   | 2026-02-26 | - |
 | 17. Re-Diff Baseline | v3.0 | 0/? | Not started | - |
 | 18. Incremental Edge Addition | v3.0 | 0/? | Not started | - |
 | 19. Incremental Edge and Node Removal | v3.0 | 0/? | Not started | - |
