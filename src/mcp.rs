@@ -39,6 +39,7 @@ use serde_json::json;
 use crate::embryonic::PatternTemplate;
 use crate::engine::Engine;
 use crate::types::{Direction, EdgeId, Epoch, Event, Filter, HopSpec, NodeId, TypeId};
+use crate::wal::WalWriter;
 
 /// Incoming JSON-RPC 2.0 request.
 #[derive(Deserialize)]
@@ -72,14 +73,32 @@ pub struct JsonRpcError {
 ///
 /// Owns the [`Engine`] directly for single-threaded stdio operation.
 /// Handles `initialize`, `tools/list`, and `tools/call` methods.
+/// An optional [`WalWriter`] provides crash-recovery durability.
 pub struct McpServer {
     engine: Engine,
+    /// Optional WAL writer for durable event persistence.
+    /// When set, every `krabnet_ingest` tool call appends to the WAL.
+    wal_writer: Option<WalWriter>,
 }
 
 impl McpServer {
-    /// Create a new MCP server wrapping the given engine.
+    /// Create a new MCP server wrapping the given engine (no WAL).
     pub fn new(engine: Engine) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            wal_writer: None,
+        }
+    }
+
+    /// Create a new MCP server with WAL persistence.
+    ///
+    /// Every `krabnet_ingest` tool call will append to the WAL before
+    /// responding, ensuring durability for crash recovery.
+    pub fn with_wal(engine: Engine, wal_writer: WalWriter) -> Self {
+        Self {
+            engine,
+            wal_writer: Some(wal_writer),
+        }
     }
 
     /// Run the stdio event loop, reading JSON-RPC requests from stdin
@@ -120,6 +139,12 @@ impl McpServer {
             writeln!(lock, "{}", out)?;
             lock.flush()?;
         }
+
+        // Flush WAL on exit to ensure all buffered events are persisted
+        if let Some(ref mut wal) = self.wal_writer {
+            wal.flush().ok();
+        }
+
         Ok(())
     }
 
@@ -426,7 +451,15 @@ impl McpServer {
             other => return Err(format!("unknown event_type: {}", other)),
         };
 
-        let epoch = self.engine.ingest(event);
+        let epoch = self.engine.ingest(event.clone());
+
+        // Persist to WAL if configured
+        if let Some(ref mut wal) = self.wal_writer {
+            if let Err(e) = wal.append(epoch, &event) {
+                eprintln!("WAL write failed: {}", e);
+            }
+        }
+
         Ok(json!({ "epoch": epoch.0 }))
     }
 
@@ -480,7 +513,7 @@ impl McpServer {
     /// Get engine statistics.
     fn tool_stats(&self) -> Result<serde_json::Value, String> {
         let stats = self.engine.stats();
-        Ok(json!({
+        let mut result = json!({
             "node_count": stats.node_count,
             "edge_count": stats.edge_count,
             "frame_count": stats.frame_count,
@@ -490,7 +523,17 @@ impl McpServer {
             "total_tuples": stats.total_tuples,
             "embryonic_candidates": stats.embryonic_candidates,
             "embryonic_templates": stats.embryonic_templates,
-        }))
+        });
+
+        if let Some(cs) = self.engine.compaction_stats() {
+            let obj = result.as_object_mut().unwrap();
+            obj.insert("compactions_completed".to_string(), json!(cs.compactions_completed));
+            obj.insert("compaction_tuples_before".to_string(), json!(cs.tuples_before));
+            obj.insert("compaction_tuples_after".to_string(), json!(cs.tuples_after));
+            obj.insert("total_compaction_time_us".to_string(), json!(cs.total_compaction_time_us));
+        }
+
+        Ok(result)
     }
 
     /// Register an embryonic pattern template.
@@ -820,6 +863,178 @@ mod tests {
         let response = server.handle_request(request);
         assert!(response.error.is_some());
         assert_eq!(response.error.unwrap().code, -32601);
+    }
+
+    /// DEBT-04: MCP krabnet_stats includes compaction metrics when compaction worker is configured.
+    ///
+    /// Creates an engine with compaction enabled, creates an McpServer, calls
+    /// krabnet_stats, and verifies that all 4 compaction fields are present.
+    #[test]
+    fn test_mcp_stats_include_compaction_fields() {
+        let engine = Engine::with_config(64, Some(10_000), None, None);
+        let mut server = McpServer::new(engine);
+
+        // Call krabnet_stats
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "krabnet_stats",
+                "arguments": {}
+            })),
+        };
+        let response = server.handle_request(request);
+        assert!(response.error.is_none());
+
+        let result = response.result.unwrap();
+        let content_text = result["content"][0]["text"].as_str().unwrap();
+        let stats: serde_json::Value = serde_json::from_str(content_text).unwrap();
+
+        // Verify compaction fields are present with initial zero values
+        assert_eq!(
+            stats["compactions_completed"], 0,
+            "compactions_completed should be 0 for fresh engine with compaction enabled"
+        );
+        assert_eq!(
+            stats["compaction_tuples_before"], 0,
+            "compaction_tuples_before should be 0"
+        );
+        assert_eq!(
+            stats["compaction_tuples_after"], 0,
+            "compaction_tuples_after should be 0"
+        );
+        assert_eq!(
+            stats["total_compaction_time_us"], 0,
+            "total_compaction_time_us should be 0"
+        );
+    }
+
+    /// DEBT-05 + DEBT-06: MCP WAL persistence and replay.
+    ///
+    /// Creates an McpServer::with_wal(), ingests 3 events via handle_request(),
+    /// drops the server to flush the WAL, then replays via WalReader to verify
+    /// all 3 events were persisted and can be recovered.
+    #[test]
+    fn test_mcp_wal_persistence_and_replay() {
+        use crate::wal::{WalReader, WalWriter};
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "krabnet_mcp_wal_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let wal_path = temp_dir.join("test.wal");
+        let _ = std::fs::remove_file(&wal_path);
+
+        // Create engine and WAL writer with sync_interval=1 (immediate flush)
+        let engine = Engine::new(64);
+        let wal_writer = WalWriter::new(&wal_path, 1).unwrap();
+
+        // Create MCP server with WAL
+        let mut server = McpServer::with_wal(engine, wal_writer);
+
+        // Ingest 2 NodeAdded events
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "krabnet_ingest",
+                "arguments": {
+                    "event_type": "NodeAdded",
+                    "node_id": 1,
+                    "type_id": 10
+                }
+            })),
+        };
+        let response = server.handle_request(request);
+        assert!(response.error.is_none());
+
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "krabnet_ingest",
+                "arguments": {
+                    "event_type": "NodeAdded",
+                    "node_id": 2,
+                    "type_id": 20
+                }
+            })),
+        };
+        let response = server.handle_request(request);
+        assert!(response.error.is_none());
+
+        // Ingest 1 EdgeAdded event
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "krabnet_ingest",
+                "arguments": {
+                    "event_type": "EdgeAdded",
+                    "edge_id": 0,
+                    "source": 1,
+                    "target": 2,
+                    "type_id": 100
+                }
+            })),
+        };
+        let response = server.handle_request(request);
+        assert!(response.error.is_none());
+
+        // Drop the server (BufWriter flush on drop ensures data is written)
+        drop(server);
+
+        // Verify WAL file exists and has content
+        assert!(wal_path.exists(), "WAL file should exist after ingest");
+        let metadata = std::fs::metadata(&wal_path).unwrap();
+        assert!(metadata.len() > 0, "WAL file should not be empty");
+
+        // Replay WAL and verify 3 events were persisted
+        let entries = WalReader::replay(&wal_path).unwrap();
+        assert_eq!(entries.len(), 3, "should replay all 3 ingested events");
+
+        // Verify event types match what was ingested
+        match &entries[0].1 {
+            crate::types::Event::NodeAdded { node_id, type_id } => {
+                assert_eq!(node_id.0, 1);
+                assert_eq!(type_id.0, 10);
+            }
+            other => panic!("expected NodeAdded, got {:?}", other),
+        }
+        match &entries[1].1 {
+            crate::types::Event::NodeAdded { node_id, type_id } => {
+                assert_eq!(node_id.0, 2);
+                assert_eq!(type_id.0, 20);
+            }
+            other => panic!("expected NodeAdded, got {:?}", other),
+        }
+        match &entries[2].1 {
+            crate::types::Event::EdgeAdded {
+                edge_id,
+                source,
+                target,
+                type_id,
+            } => {
+                assert_eq!(edge_id.0, 0);
+                assert_eq!(source.0, 1);
+                assert_eq!(target.0, 2);
+                assert_eq!(type_id.0, 100);
+            }
+            other => panic!("expected EdgeAdded, got {:?}", other),
+        }
+
+        // Verify epochs are sequential (engine starts at epoch 0)
+        let e0 = entries[0].0.0;
+        assert_eq!(entries[1].0.0, e0 + 1, "second event should be epoch+1");
+        assert_eq!(entries[2].0.0, e0 + 2, "third event should be epoch+2");
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     #[test]
