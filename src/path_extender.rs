@@ -1364,4 +1364,436 @@ mod tests {
 
         assert!(result.retracted_paths.is_empty());
     }
+
+    // ── Property change re-evaluation tests ──────────────────────────
+
+    #[test]
+    fn test_property_changed_retract_single_hop() {
+        // 1-hop frame with PropertyEquals filter. Node B has property that
+        // no longer matches (graph already mutated to non-matching value).
+        // Existing path [A, B] should be retracted.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10)); // A (anchor)
+        g.add_node(NodeId(2), TypeId(20)); // B (reached)
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+        // After property change: B now has value 99, not 42.
+        g.set_property(NodeId(2), 5, PropertyValue::Integer(99));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::PropertyEquals {
+                key: 5,
+                value: PropertyValue::Integer(42),
+            },
+        }];
+
+        // Path [A, B] was materialized when B had value 42.
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = reevaluate_property_changed(
+            NodeId(1),
+            &pattern,
+            &g,
+            &path_refs,
+            NodeId(2),
+        );
+
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(result.retracted_paths[0], vec![NodeId(1), NodeId(2)]);
+        assert!(result.new_paths.is_empty());
+    }
+
+    #[test]
+    fn test_property_changed_assert_single_hop() {
+        // 1-hop frame with PropertyEquals filter. Node B previously did not
+        // have matching property (no existing paths). After property change,
+        // B now matches. Expect: no retractions, one new path asserted.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10)); // A (anchor)
+        g.add_node(NodeId(2), TypeId(20)); // B (reached)
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+        // After property change: B now has value 42 (matching).
+        g.set_property(NodeId(2), 5, PropertyValue::Integer(42));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::PropertyEquals {
+                key: 5,
+                value: PropertyValue::Integer(42),
+            },
+        }];
+
+        // No existing paths (B did not match before).
+        let paths: Vec<Vec<NodeId>> = Vec::new();
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = reevaluate_property_changed(
+            NodeId(1),
+            &pattern,
+            &g,
+            &path_refs,
+            NodeId(2),
+        );
+
+        assert!(result.retracted_paths.is_empty());
+        assert_eq!(result.new_paths.len(), 1);
+        assert_eq!(result.new_paths[0], vec![NodeId(1), NodeId(2)]);
+    }
+
+    #[test]
+    fn test_property_changed_no_filter_early_exit() {
+        // 1-hop frame with Filter::None. Property changes on reached node.
+        // Expect: empty retracted, empty new_paths (early exit).
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+        g.set_property(NodeId(2), 5, PropertyValue::Integer(42));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::None,
+        }];
+
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = reevaluate_property_changed(
+            NodeId(1),
+            &pattern,
+            &g,
+            &path_refs,
+            NodeId(2),
+        );
+
+        assert!(result.retracted_paths.is_empty());
+        assert!(result.new_paths.is_empty());
+    }
+
+    #[test]
+    fn test_property_changed_multi_hop_intermediate() {
+        // 2-hop frame: hop 0 has PropertyEquals, hop 1 has Filter::None.
+        // Changed node is at position 1 (reached by hop 0). If filter no
+        // longer passes, path retracted.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10)); // A (anchor)
+        g.add_node(NodeId(2), TypeId(20)); // B (intermediate, reached by hop 0)
+        g.add_node(NodeId(3), TypeId(30)); // C (terminal, reached by hop 1)
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+        g.add_edge(NodeId(2), NodeId(3), TypeId(200));
+        // After property change: B now has value 99, not 42.
+        g.set_property(NodeId(2), 5, PropertyValue::Integer(99));
+
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::PropertyEquals {
+                    key: 5,
+                    value: PropertyValue::Integer(42),
+                },
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(200)),
+                target_type: Some(TypeId(30)),
+                filter: Filter::None,
+            },
+        ];
+
+        // Path [A, B, C] was materialized when B had value 42.
+        let paths = vec![vec![NodeId(1), NodeId(2), NodeId(3)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = reevaluate_property_changed(
+            NodeId(1),
+            &pattern,
+            &g,
+            &path_refs,
+            NodeId(2),
+        );
+
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(
+            result.retracted_paths[0],
+            vec![NodeId(1), NodeId(2), NodeId(3)]
+        );
+        assert!(result.new_paths.is_empty());
+    }
+
+    #[test]
+    fn test_property_changed_dedup_against_existing() {
+        // 2 paths exist through changed node. Only one path's filter fails.
+        // Expect: 1 retraction, 0 new paths (the still-valid path is NOT re-asserted).
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10)); // A (anchor)
+        g.add_node(NodeId(2), TypeId(20)); // B (changed node)
+        g.add_node(NodeId(3), TypeId(20)); // C (another reached node)
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+        g.add_edge(NodeId(1), NodeId(3), TypeId(100));
+        // B still matches the filter (value 42).
+        g.set_property(NodeId(2), 5, PropertyValue::Integer(42));
+        // C also has the property (value 42).
+        g.set_property(NodeId(3), 5, PropertyValue::Integer(42));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::PropertyEquals {
+                key: 5,
+                value: PropertyValue::Integer(42),
+            },
+        }];
+
+        // Both paths exist.
+        let paths = vec![
+            vec![NodeId(1), NodeId(2)],
+            vec![NodeId(1), NodeId(3)],
+        ];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        // Property change on node 2, but it still matches.
+        let result = reevaluate_property_changed(
+            NodeId(1),
+            &pattern,
+            &g,
+            &path_refs,
+            NodeId(2),
+        );
+
+        // B still passes filter, so no retraction, no new paths.
+        assert!(result.retracted_paths.is_empty());
+        assert!(result.new_paths.is_empty());
+    }
+
+    #[test]
+    fn test_property_changed_has_property_filter() {
+        // 1-hop frame with HasProperty filter. Node has the property.
+        // Since PropertyChanged always sets a value, HasProperty still passes.
+        // Expect: no retraction.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+        // Node 2 has property key 7 (changed value, but still present).
+        g.set_property(NodeId(2), 7, PropertyValue::Boolean(false));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::HasProperty { key: 7 },
+        }];
+
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = reevaluate_property_changed(
+            NodeId(1),
+            &pattern,
+            &g,
+            &path_refs,
+            NodeId(2),
+        );
+
+        // HasProperty still passes -- no retraction, no new paths.
+        assert!(result.retracted_paths.is_empty());
+        assert!(result.new_paths.is_empty());
+    }
+
+    #[test]
+    fn test_property_changed_anchor_not_affected() {
+        // Changed node IS the anchor. Anchor is not reached by any hop (it is
+        // at position 0, not a "reached" node). Expect: empty deltas.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10)); // anchor (changed node)
+        g.add_node(NodeId(2), TypeId(20));
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+        g.set_property(NodeId(1), 5, PropertyValue::Integer(99));
+        g.set_property(NodeId(2), 5, PropertyValue::Integer(42));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::PropertyEquals {
+                key: 5,
+                value: PropertyValue::Integer(42),
+            },
+        }];
+
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        // Property change on node 1 (anchor). The filter is on hop 0 which
+        // checks node 2, not node 1. Anchor's property is irrelevant.
+        let result = reevaluate_property_changed(
+            NodeId(1),
+            &pattern,
+            &g,
+            &path_refs,
+            NodeId(1),
+        );
+
+        assert!(result.retracted_paths.is_empty());
+        assert!(result.new_paths.is_empty());
+    }
+
+    #[test]
+    fn test_property_changed_retract_and_assert_different_paths() {
+        // Two reachable nodes (B and C) from anchor A via same hop.
+        // B no longer matches after property change (retract [A,B]).
+        // Separately, C now matches (assert [A,C] when C is changed_node).
+        //
+        // The function processes one changed_node per call, so we verify
+        // both retraction (changed_node=B) and assertion (changed_node=C).
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10)); // A (anchor)
+        g.add_node(NodeId(2), TypeId(20)); // B
+        g.add_node(NodeId(3), TypeId(20)); // C
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100)); // A->B
+        g.add_edge(NodeId(1), NodeId(3), TypeId(100)); // A->C
+
+        // B's property changed to non-matching value.
+        g.set_property(NodeId(2), 5, PropertyValue::Integer(99));
+        // C has matching value.
+        g.set_property(NodeId(3), 5, PropertyValue::Integer(42));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::PropertyEquals {
+                key: 5,
+                value: PropertyValue::Integer(42),
+            },
+        }];
+
+        // Part 1: changed_node=B, existing path [A,B].
+        let paths = vec![vec![NodeId(1), NodeId(2)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result_b = reevaluate_property_changed(
+            NodeId(1), &pattern, &g, &path_refs, NodeId(2),
+        );
+
+        // B no longer matches: retract [A,B], no new paths through B.
+        assert_eq!(result_b.retracted_paths.len(), 1);
+        assert_eq!(result_b.retracted_paths[0], vec![NodeId(1), NodeId(2)]);
+        assert!(result_b.new_paths.is_empty());
+
+        // Part 2: changed_node=C, no existing paths.
+        let empty_paths: Vec<Vec<NodeId>> = Vec::new();
+        let empty_refs: Vec<&Vec<NodeId>> = empty_paths.iter().collect();
+
+        let result_c = reevaluate_property_changed(
+            NodeId(1), &pattern, &g, &empty_refs, NodeId(3),
+        );
+
+        // C now matches: assert [A,C].
+        assert!(result_c.retracted_paths.is_empty());
+        assert_eq!(result_c.new_paths.len(), 1);
+        assert_eq!(result_c.new_paths[0], vec![NodeId(1), NodeId(3)]);
+    }
+
+    #[test]
+    fn test_property_changed_retract_and_assert_same_call() {
+        // Test that a single reevaluate_property_changed call can produce
+        // both retractions and assertions simultaneously.
+        //
+        // 2-hop pattern, both hops have property filters.
+        // Hop 0: Outgoing, type 100, target_type None, PropertyEquals(key=5, val=42)
+        // Hop 1: Outgoing, type 200, target_type None, PropertyEquals(key=6, val=100)
+        //
+        // Graph:
+        //   A(1) ->100-> B(2) ->200-> C(3)
+        //   A(1) ->100-> X(4) ->200-> B(2)
+        //
+        // Node properties after change:
+        //   B: key=5 val=99 (fails hop 0 filter), key=6 val=100 (passes hop 1 filter)
+        //   X: key=5 val=42 (passes hop 0 filter)
+        //   C: key=6 val=100 (passes hop 1 filter)
+        //
+        // Existing path: [A, B, C] (when B had key=5 val=42 for hop 0)
+        // changed_node = B
+        //
+        // Expected:
+        //   Retract [A, B, C]: B at pos 1 (hop 0) fails PropertyEquals(5, 42)
+        //   Assert [A, X, B]: B at pos 2 (hop 1) passes PropertyEquals(6, 100)
+        //     X is reached via backward prefix from A through hop 0 (X passes hop 0)
+        //     B is the reached node for hop 1
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10)); // A (anchor)
+        g.add_node(NodeId(2), TypeId(20)); // B (changed node)
+        g.add_node(NodeId(3), TypeId(30)); // C
+        g.add_node(NodeId(4), TypeId(40)); // X
+
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100)); // A->B
+        g.add_edge(NodeId(2), NodeId(3), TypeId(200)); // B->C
+        g.add_edge(NodeId(1), NodeId(4), TypeId(100)); // A->X
+        g.add_edge(NodeId(4), NodeId(2), TypeId(200)); // X->B
+
+        // X passes hop 0 filter.
+        g.set_property(NodeId(4), 5, PropertyValue::Integer(42));
+        // B after change: fails hop 0 (key=5 val=99), passes hop 1 (key=6 val=100).
+        g.set_property(NodeId(2), 5, PropertyValue::Integer(99));
+        g.set_property(NodeId(2), 6, PropertyValue::Integer(100));
+        // C passes hop 1 filter.
+        g.set_property(NodeId(3), 6, PropertyValue::Integer(100));
+
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: None,
+                filter: Filter::PropertyEquals {
+                    key: 5,
+                    value: PropertyValue::Integer(42),
+                },
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(200)),
+                target_type: None,
+                filter: Filter::PropertyEquals {
+                    key: 6,
+                    value: PropertyValue::Integer(100),
+                },
+            },
+        ];
+
+        let paths = vec![vec![NodeId(1), NodeId(2), NodeId(3)]];
+        let path_refs: Vec<&Vec<NodeId>> = paths.iter().collect();
+
+        let result = reevaluate_property_changed(
+            NodeId(1),
+            &pattern,
+            &g,
+            &path_refs,
+            NodeId(2),
+        );
+
+        // Retract [A, B, C]: B at position 1 (hop 0) no longer has val=42.
+        assert_eq!(result.retracted_paths.len(), 1);
+        assert_eq!(
+            result.retracted_paths[0],
+            vec![NodeId(1), NodeId(2), NodeId(3)]
+        );
+
+        // Assert [A, X, B]: B at position 2 (hop 1) passes val=100.
+        // X is found via backward_prefixes(anchor=1, hop_idx=1, origin=4).
+        // backward_prefixes walks hop 0 from anchor 1, finding 1->4 (X passes hop 0).
+        // extend_forward from B at hop 1 (last hop): path complete as [1, 4, 2].
+        assert_eq!(result.new_paths.len(), 1);
+        assert_eq!(result.new_paths[0], vec![NodeId(1), NodeId(4), NodeId(2)]);
+    }
 }
