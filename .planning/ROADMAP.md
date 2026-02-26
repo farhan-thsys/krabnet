@@ -140,7 +140,7 @@ Plans:
 | 14. Wire Post-Ingest Pipeline | v2.0 | 1/1 | Complete | 2026-02-26 |
 | 15. Harden MCP Binary | v2.0 | 1/1 | Complete | 2026-02-26 |
 | 16. Tech Debt Closure | 1/1 | Complete    | 2026-02-26 | - |
-| 17. Re-Diff Baseline | 1/1 | Complete   | 2026-02-26 | - |
+| 17. Re-Diff Baseline | 1/1 | Complete    | 2026-02-26 | - |
 | 18. Incremental Edge Addition | v3.0 | 0/? | Not started | - |
 | 19. Incremental Edge and Node Removal | v3.0 | 0/? | Not started | - |
 | 20. Incremental Property Change | v3.0 | 0/? | Not started | - |
