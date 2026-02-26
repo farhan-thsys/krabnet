@@ -45,9 +45,9 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 
 ### Incremental Property Change
 
-- [ ] **PROP-01**: PropertyChanged events re-evaluate hop filters for all frames containing the affected node
-- [ ] **PROP-02**: Paths that no longer satisfy filters retracted as -1 deltas
-- [ ] **PROP-03**: Paths that newly satisfy filters asserted as +1 deltas
+- [x] **PROP-01**: PropertyChanged events re-evaluate hop filters for all frames containing the affected node
+- [x] **PROP-02**: Paths that no longer satisfy filters retracted as -1 deltas
+- [x] **PROP-03**: Paths that newly satisfy filters asserted as +1 deltas
 - [ ] **PROP-04**: Incremental PropertyChanged produces identical frame state to full re-traverse (oracle verified)
 
 ### Performance and Optimization
@@ -107,9 +107,9 @@ Deferred to future release. Tracked but not in current roadmap.
 | NDEL-01 | Phase 19 | Complete |
 | NDEL-02 | Phase 19 | Complete |
 | NDEL-03 | Phase 19 | Complete |
-| PROP-01 | Phase 20 | Pending |
-| PROP-02 | Phase 20 | Pending |
-| PROP-03 | Phase 20 | Pending |
+| PROP-01 | Phase 20 | Complete |
+| PROP-02 | Phase 20 | Complete |
+| PROP-03 | Phase 20 | Complete |
 | PROP-04 | Phase 20 | Pending |
 | PERF-01 | Phase 21 | Pending |
 | PERF-02 | Phase 21 | Pending |

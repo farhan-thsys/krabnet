@@ -5,24 +5,24 @@
 See: .planning/PROJECT.md (updated 2026-02-26)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 19 -- Incremental Edge & Node Removal
+**Current focus:** Phase 20 -- Incremental Property Change
 **Milestone:** v3.0 -- Tech Debt Closure + Incremental Path Extension
 
 ## Current Position
 
-Phase: 19 of 21 (Incremental Edge & Node Removal) -- COMPLETE
-Plan: 2 of 2 in current phase (Plan 02 COMPLETE)
-Status: Phase 19 complete -- incremental removal dispatch wired into engine, 6 new oracle tests pass
-Last activity: 2026-02-26 -- Phase 19 Plan 02 engine integration executed
+Phase: 20 of 21 (Incremental Property Change)
+Plan: 1 of 2 in current phase (Plan 01 COMPLETE)
+Status: reevaluate_property_changed function and 9 unit tests added to path_extender.rs
+Last activity: 2026-02-26 -- Phase 20 Plan 01 property change algorithm executed
 
-Progress: [███████████████████░] 90% (19/21 phases)
+Progress: [███████████████████░] 95% (20/21 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 24
+- Total plans completed: 25
 - Average duration: 6 min
-- Total execution time: 2.26 hours
+- Total execution time: 2.39 hours
 
 **By Phase:**
 
@@ -46,9 +46,10 @@ Progress: [███████████████████░] 90% (19
 | 17 - Re-Diff Baseline | 1 | 9 min | 9 min |
 | 18 - Incremental Edge Addition | 2 | 12 min | 6 min |
 | 19 - Incremental Edge & Node Removal | 2 | 11 min | 6 min |
+| 20 - Incremental Property Change | 1 | 8 min | 8 min |
 
 **Recent Trend:**
-- Last 5 plans: 9m, 5m, 7m, 4m, 7m
+- Last 5 plans: 5m, 7m, 4m, 7m, 8m
 - Trend: stable
 
 ## Accumulated Context
@@ -77,6 +78,10 @@ Recent decisions affecting current work:
 - v3.0: force_rematerialize parameter on maintain_and_evaluate_frames bypasses event dispatch -- cleaner than sentinel event tricks
 - v3.0: DeletionContext captured before graph.remove_node() for future extensibility (current algorithm uses path scanning)
 - v3.0: Coalescer uses force_rematerialize=true instead of NodeRemoved sentinel to avoid triggering incremental retraction
+- v3.0: reevaluate_property_changed combines retract+assert in single function for atomicity and shared retracted-set filtering
+- v3.0: Early exit for patterns with no property filters avoids unnecessary path scanning on PropertyChanged events
+- v3.0: node_passes_hop checks target_type + property filter but NOT edge_type (edge verified by graph adjacency)
+- v3.0: find_hop_origins reverses hop direction to find nodes that could reach changed_node via the hop's edge
 
 ### Pending Todos
 
@@ -91,5 +96,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 19-02-PLAN.md -- incremental removal dispatch wired into engine with 6 new oracle tests (Phase 19 COMPLETE)
+Stopped at: Completed 20-01-PLAN.md -- reevaluate_property_changed function and 9 unit tests added to path_extender.rs
 Resume file: None
