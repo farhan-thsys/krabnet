@@ -152,5 +152,5 @@ Plans:
 | 17. Re-Diff Baseline | 1/1 | Complete    | 2026-02-26 | - |
 | 18. Incremental Edge Addition | 2/2 | Complete    | 2026-02-26 | - |
 | 19. Incremental Edge and Node Removal | 2/2 | Complete    | 2026-02-26 | - |
-| 20. Incremental Property Change | 2/2 | Complete   | 2026-02-26 | - |
+| 20. Incremental Property Change | 2/2 | Complete    | 2026-02-26 | - |
 | 21. Performance and Benchmarks | v3.0 | 0/? | Not started | - |
