@@ -52,13 +52,15 @@
 **Goal**: All v2.0 tech debt items are committed, tested, and available in the public API
 **Depends on**: Phase 15
 **Requirements**: DEBT-01, DEBT-02, DEBT-03, DEBT-04, DEBT-05, DEBT-06, DEBT-07
+**Plans:** 1 plan
+Plans:
+- [ ] 16-01-PLAN.md — Write verification tests for all 7 DEBT items, run full test suite, commit
 **Success Criteria** (what must be TRUE):
   1. AnthropicClient implementing LlmClient trait compiles and is exported from lib.rs, callable by downstream code
   2. krabnet-server binary detects ANTHROPIC_API_KEY env var at startup and logs whether real or mock LLM is active
   3. gRPC GetStats response includes compaction metrics (compactions_completed, tuples_before, tuples_after, total_compaction_time_us)
   4. MCP krabnet_stats tool response includes the same compaction metrics
   5. MCP binary persists ingest events to WAL and replays them on crash recovery startup
-**Plans**: TBD
 
 ### Phase 17: Re-Diff Baseline
 **Goal**: Frames stay in sync with the graph as it mutates, using full re-traverse + diff as the correctness baseline for all subsequent incremental phases
@@ -116,7 +118,7 @@
 
 ## Progress
 
-**Execution Order:** Phase 16 → 17 → 18 → 19 → 20 → 21
+**Execution Order:** Phase 16 -> 17 -> 18 -> 19 -> 20 -> 21
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -135,7 +137,7 @@
 | 13. Scale and Optimize | v2.0 | 3/3 | Complete | 2026-02-24 |
 | 14. Wire Post-Ingest Pipeline | v2.0 | 1/1 | Complete | 2026-02-26 |
 | 15. Harden MCP Binary | v2.0 | 1/1 | Complete | 2026-02-26 |
-| 16. Tech Debt Closure | v3.0 | 0/? | Not started | - |
+| 16. Tech Debt Closure | v3.0 | 0/1 | In progress | - |
 | 17. Re-Diff Baseline | v3.0 | 0/? | Not started | - |
 | 18. Incremental Edge Addition | v3.0 | 0/? | Not started | - |
 | 19. Incremental Edge and Node Removal | v3.0 | 0/? | Not started | - |
