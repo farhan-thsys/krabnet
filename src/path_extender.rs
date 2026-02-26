@@ -523,4 +523,180 @@ mod tests {
 
         assert!(result2.new_paths.is_empty());
     }
+
+    #[test]
+    fn test_any_direction() {
+        // Test Direction::Any: edge 1->2, hop says Any, anchor=1.
+        // The edge can be traversed as outgoing (1->2) or incoming (2->1).
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Any,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::None,
+        }];
+
+        // Outgoing interpretation: origin=1, reached=2 (type 20 matches).
+        // Incoming interpretation: origin=2, reached=1 (type 10 != 20, fails).
+        let result = extend_edge_added(NodeId(1), &pattern, &g, NodeId(1), NodeId(2), TypeId(100));
+
+        assert_eq!(result.new_paths.len(), 1);
+        assert_eq!(result.new_paths[0], vec![NodeId(1), NodeId(2)]);
+    }
+
+    #[test]
+    fn test_any_direction_both_orientations() {
+        // Both orientations produce valid paths -- no target_type filter.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(10)); // Same type as node 1.
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Any,
+            edge_type: Some(TypeId(100)),
+            target_type: None, // No type filter, both orientations valid.
+            filter: Filter::None,
+        }];
+
+        // Anchor=1. Outgoing: origin=1==anchor, reached=2. Path: [1,2].
+        // Incoming: origin=2!=anchor, reached=1. No backward prefix (2 != 1 for hop 0).
+        let result = extend_edge_added(NodeId(1), &pattern, &g, NodeId(1), NodeId(2), TypeId(100));
+
+        assert_eq!(result.new_paths.len(), 1);
+        assert_eq!(result.new_paths[0], vec![NodeId(1), NodeId(2)]);
+
+        // Now with anchor=2: Outgoing: origin=1!=2. Incoming: origin=2==anchor, reached=1.
+        let result2 =
+            extend_edge_added(NodeId(2), &pattern, &g, NodeId(1), NodeId(2), TypeId(100));
+
+        assert_eq!(result2.new_paths.len(), 1);
+        assert_eq!(result2.new_paths[0], vec![NodeId(2), NodeId(1)]);
+    }
+
+    #[test]
+    fn test_has_property_filter() {
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        g.set_property(NodeId(2), 7, PropertyValue::Boolean(true));
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::HasProperty { key: 7 },
+        }];
+
+        let result = extend_edge_added(NodeId(1), &pattern, &g, NodeId(1), NodeId(2), TypeId(100));
+
+        assert_eq!(result.new_paths.len(), 1);
+        assert_eq!(result.new_paths[0], vec![NodeId(1), NodeId(2)]);
+
+        // Node without the property -- should return empty.
+        let mut g2 = Graph::new();
+        g2.add_node(NodeId(1), TypeId(10));
+        g2.add_node(NodeId(2), TypeId(20));
+        // No property set on node 2.
+        g2.add_edge(NodeId(1), NodeId(2), TypeId(100));
+
+        let result2 =
+            extend_edge_added(NodeId(1), &pattern, &g2, NodeId(1), NodeId(2), TypeId(100));
+
+        assert!(result2.new_paths.is_empty());
+    }
+
+    #[test]
+    fn test_three_hop_first_edge_added() {
+        // 3-hop pattern, new edge satisfies hop 0. Forward extension must
+        // traverse hops 1 and 2 to complete the path.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        g.add_node(NodeId(3), TypeId(30));
+        g.add_node(NodeId(4), TypeId(40));
+
+        // New edge at hop 0: 1->2 type 100.
+        g.add_edge(NodeId(1), NodeId(2), TypeId(100));
+        // Existing edges for hops 1 and 2.
+        g.add_edge(NodeId(2), NodeId(3), TypeId(200));
+        g.add_edge(NodeId(3), NodeId(4), TypeId(300));
+
+        let pattern = vec![
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(100)),
+                target_type: Some(TypeId(20)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(200)),
+                target_type: Some(TypeId(30)),
+                filter: Filter::None,
+            },
+            HopSpec {
+                direction: Direction::Outgoing,
+                edge_type: Some(TypeId(300)),
+                target_type: Some(TypeId(40)),
+                filter: Filter::None,
+            },
+        ];
+
+        let result = extend_edge_added(NodeId(1), &pattern, &g, NodeId(1), NodeId(2), TypeId(100));
+
+        assert_eq!(result.new_paths.len(), 1);
+        assert_eq!(
+            result.new_paths[0],
+            vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4)]
+        );
+    }
+
+    #[test]
+    fn test_anchor_mismatch_hop_zero() {
+        // Edge source != anchor for hop 0, so no backward prefix.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        g.add_node(NodeId(3), TypeId(20));
+        g.add_edge(NodeId(2), NodeId(3), TypeId(100));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: Some(TypeId(20)),
+            filter: Filter::None,
+        }];
+
+        // Anchor=1, but edge source=2. No backward prefix for hop 0.
+        let result = extend_edge_added(NodeId(1), &pattern, &g, NodeId(2), NodeId(3), TypeId(100));
+
+        assert!(result.new_paths.is_empty());
+    }
+
+    #[test]
+    fn test_wildcard_edge_type() {
+        // hop.edge_type is None -- any edge type matches.
+        let mut g = Graph::new();
+        g.add_node(NodeId(1), TypeId(10));
+        g.add_node(NodeId(2), TypeId(20));
+        g.add_edge(NodeId(1), NodeId(2), TypeId(999));
+
+        let pattern = vec![HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: None, // Wildcard: any edge type.
+            target_type: Some(TypeId(20)),
+            filter: Filter::None,
+        }];
+
+        let result = extend_edge_added(NodeId(1), &pattern, &g, NodeId(1), NodeId(2), TypeId(999));
+
+        assert_eq!(result.new_paths.len(), 1);
+        assert_eq!(result.new_paths[0], vec![NodeId(1), NodeId(2)]);
+    }
 }
