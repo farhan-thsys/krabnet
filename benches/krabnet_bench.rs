@@ -15,7 +15,7 @@
 //! 12. `bench_scale_set_trie_routing` -- Set-Trie routing at enterprise scale (BENCH-06)
 //! 13. `bench_scale_embryonic` -- embryonic observation with 100 templates (BENCH-07)
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use krabnet::*;
 
 use krabnet::embryonic::PatternTemplate;
@@ -643,6 +643,278 @@ fn bench_scale_embryonic(c: &mut Criterion) {
     });
 }
 
+// === Incremental Path Extension Benchmarks (PERF-01 through PERF-03) ===
+
+/// Helper: builds a graph with `n` nodes in a chain, a 1-hop frame at anchor=NodeId(1),
+/// materializes it, then adds a NEW node and edge for incremental testing.
+///
+/// Returns `(graph, frame, pattern, new_target)` where new_target is the newly added node.
+fn setup_scaling_graph(n: u64) -> (Graph, Frame, Vec<HopSpec>, NodeId) {
+    let mut graph = Graph::new();
+
+    // Add n nodes: NodeId(1)..NodeId(n), all TypeId(10)
+    for i in 1..=n {
+        graph.add_node(NodeId(i), TypeId(10));
+    }
+
+    // Chain edges: 1->2->3->...->n, all TypeId(100)
+    for i in 1..n {
+        graph.add_edge(NodeId(i), NodeId(i + 1), TypeId(100));
+    }
+
+    // 1-hop frame at anchor=NodeId(1)
+    let pattern = vec![HopSpec {
+        direction: Direction::Outgoing,
+        edge_type: Some(TypeId(100)),
+        target_type: None,
+        filter: Filter::None,
+    }];
+
+    let mut frame = Frame::new(0, NodeId(1), pattern.clone());
+    frame.materialize(&graph, Epoch(n + 10));
+    assert!(
+        !frame.snapshot(Epoch(u64::MAX)).is_empty(),
+        "Frame must have at least 1 materialized path after setup"
+    );
+
+    // Add NEW node and edge: NodeId(1) -> NodeId(n+1)
+    let new_target = NodeId(n + 1);
+    graph.add_node(new_target, TypeId(10));
+    graph.add_edge(NodeId(1), new_target, TypeId(100));
+
+    (graph, frame, pattern, new_target)
+}
+
+/// Benchmark: incremental scaling -- extend_edge_added latency vs full rematerialize
+/// across graph sizes 100, 1K, 10K (PERF-01).
+///
+/// Demonstrates that incremental EdgeAdded latency stays approximately constant
+/// while full rematerialize grows with graph size.
+fn bench_incremental_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("incremental_scaling");
+
+    for &node_count in &[100u64, 1_000, 10_000] {
+        let batch_size = if node_count <= 1_000 {
+            criterion::BatchSize::SmallInput
+        } else {
+            criterion::BatchSize::LargeInput
+        };
+
+        group.bench_with_input(
+            BenchmarkId::new("extend_edge_added", node_count),
+            &node_count,
+            |b, &n| {
+                b.iter_batched(
+                    || setup_scaling_graph(n),
+                    |(graph, _frame, pattern, new_target)| {
+                        black_box(extend_edge_added(
+                            NodeId(1),
+                            &pattern,
+                            &graph,
+                            NodeId(1),
+                            new_target,
+                            TypeId(100),
+                        ))
+                    },
+                    batch_size,
+                );
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("full_rematerialize", node_count),
+            &node_count,
+            |b, &n| {
+                b.iter_batched(
+                    || setup_scaling_graph(n),
+                    |(_graph, mut frame, _pattern, _new_target)| {
+                        // Re-read graph from the tuple
+                        frame.rematerialize(&_graph, Epoch(n + 20));
+                        black_box(&frame);
+                    },
+                    batch_size,
+                );
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Helper: builds a 50-node graph with chain and cross-links for paired benchmarks.
+///
+/// Returns `(graph, frame, pattern)` with a 2-hop frame materialized at Epoch(100).
+fn setup_paired_graph() -> (Graph, Frame, Vec<HopSpec>) {
+    let mut graph = Graph::new();
+
+    // 50 nodes, all TypeId(10)
+    for i in 1..=50u64 {
+        graph.add_node(NodeId(i), TypeId(10));
+    }
+
+    // Chain: 1->2->3->...->50, TypeId(100)
+    for i in 1..50u64 {
+        graph.add_edge(NodeId(i), NodeId(i + 1), TypeId(100));
+    }
+
+    // Cross-links every 5th node, TypeId(200)
+    for i in (1..=50u64).step_by(5) {
+        let target = if i + 10 <= 50 { i + 10 } else { continue };
+        graph.add_edge(NodeId(i), NodeId(target), TypeId(200));
+    }
+
+    // 2-hop frame at anchor=NodeId(1)
+    let pattern = vec![
+        HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: None,
+            filter: Filter::None,
+        },
+        HopSpec {
+            direction: Direction::Outgoing,
+            edge_type: Some(TypeId(100)),
+            target_type: None,
+            filter: Filter::None,
+        },
+    ];
+
+    let mut frame = Frame::new(0, NodeId(1), pattern.clone());
+    frame.materialize(&graph, Epoch(100));
+
+    (graph, frame, pattern)
+}
+
+/// Benchmark: incremental extend_edge_added on a 2-hop frame (PERF-02).
+///
+/// Measures latency of computing new paths after adding edge NodeId(2)->NodeId(40).
+fn bench_incremental_edge_added(c: &mut Criterion) {
+    c.bench_function("incremental_edge_added", |b| {
+        b.iter_batched(
+            || {
+                let (mut graph, frame, pattern) = setup_paired_graph();
+                // Add the new edge in setup
+                graph.add_edge(NodeId(2), NodeId(40), TypeId(100));
+                assert!(
+                    !frame.snapshot(Epoch(u64::MAX)).is_empty(),
+                    "Frame must have paths"
+                );
+                (graph, frame, pattern)
+            },
+            |(graph, _frame, pattern)| {
+                black_box(extend_edge_added(
+                    NodeId(1),
+                    &pattern,
+                    &graph,
+                    NodeId(2),
+                    NodeId(40),
+                    TypeId(100),
+                ))
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
+
+/// Benchmark: full rematerialize baseline paired with bench_incremental_edge_added (PERF-02).
+///
+/// Same setup as bench_incremental_edge_added; measures full rematerialize latency.
+fn bench_rematerialize_edge_added(c: &mut Criterion) {
+    c.bench_function("rematerialize_edge_added", |b| {
+        b.iter_batched(
+            || {
+                let (mut graph, frame, pattern) = setup_paired_graph();
+                graph.add_edge(NodeId(2), NodeId(40), TypeId(100));
+                (graph, frame, pattern)
+            },
+            |(graph, mut frame, _pattern)| {
+                frame.rematerialize(&graph, Epoch(200));
+                black_box(&frame);
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
+
+/// Benchmark: incremental retract_edge_removed on a 2-hop frame (PERF-03).
+///
+/// Measures latency of computing retracted paths after removing chain edge 2->3.
+fn bench_incremental_edge_removed(c: &mut Criterion) {
+    c.bench_function("incremental_edge_removed", |b| {
+        b.iter_batched(
+            || {
+                let (mut graph, frame, pattern) = setup_paired_graph();
+                assert!(
+                    !frame.snapshot(Epoch(u64::MAX)).is_empty(),
+                    "Frame must have paths"
+                );
+
+                // Find and remove the edge from NodeId(2)->NodeId(3).
+                // Chain edge i->i+1 is the (i-1)th edge added. Edge 2->3 is EdgeId
+                // assigned during graph construction. We need to find it.
+                let neighbors =
+                    graph.neighbors(NodeId(2), Direction::Outgoing, Some(TypeId(100)));
+                let edge_id = neighbors
+                    .iter()
+                    .find(|(_eid, nid)| *nid == NodeId(3))
+                    .expect("Edge 2->3 must exist")
+                    .0;
+                graph.remove_edge(edge_id);
+
+                // Take snapshot and convert to owned refs for retract_edge_removed
+                let current_refs: Vec<Vec<NodeId>> = frame
+                    .snapshot(Epoch(u64::MAX))
+                    .into_iter()
+                    .cloned()
+                    .collect();
+
+                (graph, frame, pattern, current_refs)
+            },
+            |(graph, _frame, pattern, current_refs)| {
+                let refs: Vec<&Vec<NodeId>> = current_refs.iter().collect();
+                black_box(retract_edge_removed(
+                    &pattern,
+                    &graph,
+                    &refs,
+                    NodeId(2),
+                    NodeId(3),
+                ))
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
+
+/// Benchmark: full rematerialize baseline paired with bench_incremental_edge_removed (PERF-03).
+///
+/// Same setup as bench_incremental_edge_removed; measures full rematerialize latency.
+fn bench_rematerialize_edge_removed(c: &mut Criterion) {
+    c.bench_function("rematerialize_edge_removed", |b| {
+        b.iter_batched(
+            || {
+                let (mut graph, frame, pattern) = setup_paired_graph();
+
+                // Remove edge 2->3
+                let neighbors =
+                    graph.neighbors(NodeId(2), Direction::Outgoing, Some(TypeId(100)));
+                let edge_id = neighbors
+                    .iter()
+                    .find(|(_eid, nid)| *nid == NodeId(3))
+                    .expect("Edge 2->3 must exist")
+                    .0;
+                graph.remove_edge(edge_id);
+
+                (graph, frame, pattern)
+            },
+            |(graph, mut frame, _pattern)| {
+                frame.rematerialize(&graph, Epoch(200));
+                black_box(&frame);
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
+
 criterion_group!(
     benches,
     bench_ingest_event,
@@ -658,5 +930,10 @@ criterion_group!(
     bench_scale_frame_query,
     bench_scale_set_trie_routing,
     bench_scale_embryonic,
+    bench_incremental_scaling,
+    bench_incremental_edge_added,
+    bench_rematerialize_edge_added,
+    bench_incremental_edge_removed,
+    bench_rematerialize_edge_removed,
 );
 criterion_main!(benches);
