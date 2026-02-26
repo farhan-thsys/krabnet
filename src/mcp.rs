@@ -26,7 +26,7 @@
 //! use krabnet::engine::Engine;
 //! use krabnet::mcp::McpServer;
 //!
-//! let engine = Engine::new(1024);
+//! let engine = Engine::with_config(1024, Some(10_000), Some(16), Some(1000));
 //! let mut server = McpServer::new(engine);
 //! server.run().unwrap();
 //! ```

@@ -13,9 +13,14 @@ use krabnet::engine::Engine;
 use krabnet::mcp::McpServer;
 
 fn main() {
-    // Create engine with 1024-slot ring buffer.
-    // Production configuration would be larger, but for MCP single-user usage this is fine.
-    let engine = Engine::new(1024);
+    // Hardened engine with background compaction, mutation coalescing, and fan-out limits.
+    // Matches krabnet-server configuration for consistent behavior.
+    let engine = Engine::with_config(
+        1024,         // ring buffer capacity
+        Some(10_000), // compaction threshold (COMPACT-01, COMPACT-03)
+        Some(16),     // coalescing window (COALESCE-01)
+        Some(1000),   // max fanout (FANOUT-01)
+    );
 
     let mut server = McpServer::new(engine);
 
