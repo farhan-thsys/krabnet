@@ -5,24 +5,24 @@
 See: .planning/PROJECT.md (updated 2026-02-26)
 
 **Core value:** When a signal arrives, decision-relevant context is already materialized -- zero query-time graph traversal. The differential math (+1/-1 deltas) must be exact and correct.
-**Current focus:** Phase 20 -- Incremental Property Change
+**Current focus:** Phase 21 -- Performance Benchmarks
 **Milestone:** v3.0 -- Tech Debt Closure + Incremental Path Extension
 
 ## Current Position
 
-Phase: 20 of 21 (Incremental Property Change) -- COMPLETE
-Plan: 2 of 2 in current phase (All plans COMPLETE)
-Status: Phase 20 complete -- all event types except NodeAdded handled incrementally
-Last activity: 2026-02-26 -- Phase 20 Plan 02 PropertyChanged engine integration executed
+Phase: 21 of 21 (Performance Benchmarks) -- IN PROGRESS
+Plan: 1 of 2 in current phase (Plan 01 COMPLETE)
+Status: Phase 21 Plan 01 complete -- 5 incremental benchmarks added (PERF-01/02/03)
+Last activity: 2026-02-26 -- Phase 21 Plan 01 incremental benchmarks executed
 
-Progress: [███████████████████░] 95% (20/21 phases)
+Progress: [███████████████████░] 97% (20.5/21 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 26
+- Total plans completed: 27
 - Average duration: 6 min
-- Total execution time: 2.49 hours
+- Total execution time: 2.56 hours
 
 **By Phase:**
 
@@ -47,9 +47,10 @@ Progress: [███████████████████░] 95% (20
 | 18 - Incremental Edge Addition | 2 | 12 min | 6 min |
 | 19 - Incremental Edge & Node Removal | 2 | 11 min | 6 min |
 | 20 - Incremental Property Change | 2 | 14 min | 7 min |
+| 21 - Performance Benchmarks | 1 | 4 min | 4 min |
 
 **Recent Trend:**
-- Last 5 plans: 7m, 4m, 7m, 8m, 6m
+- Last 5 plans: 4m, 7m, 8m, 6m, 4m
 - Trend: stable
 
 ## Accumulated Context
@@ -84,6 +85,8 @@ Recent decisions affecting current work:
 - v3.0: find_hop_origins reverses hop direction to find nodes that could reach changed_node via the hop's edge
 - v3.0: All event types except NodeAdded dispatched incrementally -- EdgeAdded, EdgeRemoved, NodeRemoved, PropertyChanged
 - v3.0: PropertyChanged dispatch uses snapshot().to_vec() for reference conversion per clippy recommendation
+- v3.0: Benchmark edge removal uses graph.neighbors() to find EdgeId since Graph::add_edge auto-assigns IDs
+- v3.0: Benchmark retract_edge_removed uses owned path clones via snapshot().cloned().collect() to avoid borrow checker conflict
 
 ### Pending Todos
 
@@ -98,5 +101,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 20-02-PLAN.md -- PropertyChanged dispatch wired into engine, 4 oracle tests added, Phase 20 complete
+Stopped at: Completed 21-01-PLAN.md -- 5 incremental benchmarks added (scaling, EdgeAdded, EdgeRemoved), all 24 benchmarks pass --test
 Resume file: None

@@ -52,9 +52,9 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 
 ### Performance and Optimization
 
-- [ ] **PERF-01**: Incremental extension cost is O(affected_paths) not O(full_DFS) for localized mutations
-- [ ] **PERF-02**: Criterion benchmark comparing incremental vs full re-traverse latency for EdgeAdded on multi-hop frames
-- [ ] **PERF-03**: Criterion benchmark for incremental EdgeRemoved latency
+- [x] **PERF-01**: Incremental extension cost is O(affected_paths) not O(full_DFS) for localized mutations
+- [x] **PERF-02**: Criterion benchmark comparing incremental vs full re-traverse latency for EdgeAdded on multi-hop frames
+- [x] **PERF-03**: Criterion benchmark for incremental EdgeRemoved latency
 - [ ] **PERF-04**: Stress test validating incremental correctness under sustained 50K+ events/sec
 - [ ] **PERF-05**: All existing 180 lib tests and 54 doc-tests continue to pass (no regressions)
 
@@ -111,9 +111,9 @@ Deferred to future release. Tracked but not in current roadmap.
 | PROP-02 | Phase 20 | Complete |
 | PROP-03 | Phase 20 | Complete |
 | PROP-04 | Phase 20 | Complete |
-| PERF-01 | Phase 21 | Pending |
-| PERF-02 | Phase 21 | Pending |
-| PERF-03 | Phase 21 | Pending |
+| PERF-01 | Phase 21 | Complete |
+| PERF-02 | Phase 21 | Complete |
+| PERF-03 | Phase 21 | Complete |
 | PERF-04 | Phase 21 | Pending |
 | PERF-05 | Phase 21 | Pending |
 
