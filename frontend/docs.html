@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documentation — krabnet</title>
+  <meta name="description" content="krabnet documentation. Learn how to integrate via gRPC or MCP.">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" type="image/png" sizes="96x96" href="favicon-96x96.png?v=2">
+  <link rel="shortcut icon" href="favicon.ico?v=2">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo">
+        <img src="krabnet_logo.png" alt="krabnet" width="28" height="28">
+        <span>krabnet</span>
+      </a>
+      <div class="nav-links">
+        <a href="docs.html">Docs</a>
+        <a href="docs.html" class="nav-cta">Get Started</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="docs">
+    <div class="docs-container">
+
+      <!-- Sidebar -->
+      <aside class="docs-sidebar">
+        <nav class="docs-nav">
+          <h4>Getting Started</h4>
+          <a href="#overview">Overview</a>
+          <a href="#installation">Installation</a>
+          <a href="#concepts">Core Concepts</a>
+          <h4>Integration</h4>
+          <a href="#grpc">gRPC Server</a>
+          <a href="#mcp">MCP Server</a>
+          <h4>Reference</h4>
+          <a href="#grpc-api">gRPC API</a>
+          <a href="#mcp-tools">MCP Tools</a>
+          <a href="#configuration">Configuration</a>
+        </nav>
+      </aside>
+
+      <!-- Content -->
+      <main class="docs-content">
+
+        <section id="overview">
+          <h1>Documentation</h1>
+          <p class="docs-lead">
+            krabnet is a real-time graph context engine. It maintains materialized views
+            over your graph data so that reads are always instant, regardless of how
+            frequently your graph changes.
+          </p>
+          <p>
+            You interact with krabnet through two interfaces: a <strong>gRPC server</strong>
+            for backend services, or an <strong>MCP server</strong> for AI agent integration.
+          </p>
+        </section>
+
+        <hr class="docs-divider">
+
+        <section id="installation">
+          <h2>Installation</h2>
+          <p>krabnet requires Rust. Install via Cargo:</p>
+          <pre><code>cargo install krabnet</code></pre>
+          <p>This installs two binaries:</p>
+          <ul>
+            <li><code>krabnet-server</code> &mdash; gRPC server for backend integration</li>
+            <li><code>krabnet-mcp</code> &mdash; MCP server for AI agent integration</li>
+          </ul>
+        </section>
+
+        <hr class="docs-divider">
+
+        <section id="concepts">
+          <h2>Core Concepts</h2>
+
+          <h3>Graph Events</h3>
+          <p>
+            krabnet ingests your graph as a stream of mutation events. Five event types
+            are supported:
+          </p>
+          <ul>
+            <li><strong>NodeAdded</strong> &mdash; a node is created with a type</li>
+            <li><strong>NodeRemoved</strong> &mdash; a node is deleted</li>
+            <li><strong>EdgeAdded</strong> &mdash; a directed edge is created between two nodes</li>
+            <li><strong>EdgeRemoved</strong> &mdash; an edge is deleted</li>
+            <li><strong>PropertyChanged</strong> &mdash; a property on a node is updated</li>
+          </ul>
+
+          <h3>Frames</h3>
+          <p>
+            A <strong>frame</strong> is a declared query over your graph &mdash; anchored at a
+            specific node, with a pattern of hops to follow. Once registered, krabnet
+            continuously maintains the frame's results as your graph changes. Querying a
+            frame returns the current answer immediately, without traversal.
+          </p>
+
+          <h3>Hop Patterns</h3>
+          <p>
+            Frames are defined by a sequence of <strong>hops</strong>. Each hop specifies:
+          </p>
+          <ul>
+            <li><strong>Direction</strong> &mdash; outgoing, incoming, or any</li>
+            <li><strong>Edge type</strong> (optional) &mdash; filter by edge type</li>
+            <li><strong>Target type</strong> (optional) &mdash; filter by target node type</li>
+          </ul>
+          <p>
+            Multi-hop patterns let you express neighborhood queries, path queries,
+            and structural patterns over your graph.
+          </p>
+        </section>
+
+        <hr class="docs-divider">
+
+        <section id="grpc">
+          <h2>gRPC Server</h2>
+          <p>Start the gRPC server:</p>
+          <pre><code>krabnet-server</code></pre>
+          <p>
+            The server listens on <code>[::1]:50051</code> by default. It provides
+            bidirectional streaming, crash recovery via write-ahead logging, and
+            automatic state replay on restart.
+          </p>
+
+          <h3>Quick Start</h3>
+          <p>
+            Connect with any gRPC client. Here's an example using
+            <a href="https://github.com/fullstorydev/grpcurl">grpcurl</a>:
+          </p>
+
+          <h4>1. Ingest some data</h4>
+          <pre><code># Add nodes
+grpcurl -plaintext -d '{
+  "node_added": {"node_id": 1, "type_id": 100}
+}' [::1]:50051 krabnet.KrabnetService/IngestEvent
+
+grpcurl -plaintext -d '{
+  "node_added": {"node_id": 2, "type_id": 200}
+}' [::1]:50051 krabnet.KrabnetService/IngestEvent
+
+# Add an edge between them
+grpcurl -plaintext -d '{
+  "edge_added": {"edge_id": 1, "source": 1, "target": 2, "type_id": 10}
+}' [::1]:50051 krabnet.KrabnetService/IngestEvent</code></pre>
+
+          <h4>2. Register a frame</h4>
+          <pre><code># Register a 1-hop outgoing frame anchored at node 1
+grpcurl -plaintext -d '{
+  "anchor_node_id": 1,
+  "pattern": [{"direction": "DIRECTION_OUTGOING"}],
+  "epoch": 0
+}' [::1]:50051 krabnet.KrabnetService/RegisterFrame</code></pre>
+
+          <h4>3. Query the frame</h4>
+          <pre><code>grpcurl -plaintext -d '{"frame_id": 0}' \
+  [::1]:50051 krabnet.KrabnetService/QueryFrame</code></pre>
+
+          <h4>4. Subscribe to updates</h4>
+          <pre><code># Stream real-time updates as the graph changes
+grpcurl -plaintext -d '{"frame_id": 0}' \
+  [::1]:50051 krabnet.KrabnetService/SubscribeFrame</code></pre>
+        </section>
+
+        <hr class="docs-divider">
+
+        <section id="mcp">
+          <h2>MCP Server</h2>
+          <p>
+            The MCP server lets AI agents interact with krabnet directly as a tool.
+            It communicates over stdio using the
+            <a href="https://modelcontextprotocol.io">Model Context Protocol</a>.
+          </p>
+
+          <h3>Configuration</h3>
+          <p>Add krabnet to your MCP client configuration. For Claude Desktop:</p>
+          <pre><code>{
+  "mcpServers": {
+    "krabnet": {
+      "command": "krabnet-mcp"
+    }
+  }
+}</code></pre>
+
+          <p>For Claude Code, add to your settings:</p>
+          <pre><code>{
+  "mcpServers": {
+    "krabnet": {
+      "command": "krabnet-mcp",
+      "type": "stdio"
+    }
+  }
+}</code></pre>
+
+          <h3>Available Tools</h3>
+          <p>Once connected, the agent has access to five tools:</p>
+          <ul>
+            <li><code>krabnet_ingest</code> &mdash; ingest graph mutation events</li>
+            <li><code>krabnet_register_frame</code> &mdash; register a maintained frame</li>
+            <li><code>krabnet_query_frame</code> &mdash; query a frame's current results</li>
+            <li><code>krabnet_register_template</code> &mdash; register an automatic pattern template</li>
+            <li><code>krabnet_stats</code> &mdash; get engine statistics</li>
+          </ul>
+
+          <h3>Example: Building a Graph</h3>
+          <p>An AI agent can build and query a graph through natural tool calls:</p>
+          <pre><code># Agent calls krabnet_ingest to add entities
+krabnet_ingest({
+  "event_type": "NodeAdded",
+  "node_id": 1,
+  "type_id": 100
+})
+
+krabnet_ingest({
+  "event_type": "EdgeAdded",
+  "edge_id": 1,
+  "source": 1,
+  "target": 2,
+  "type_id": 10
+})
+
+# Agent registers a frame for ongoing context
+krabnet_register_frame({
+  "anchor_node_id": 1,
+  "pattern": [{"direction": "Outgoing"}],
+  "epoch": 0
+})
+
+# Agent queries the frame — instant results
+krabnet_query_frame({"frame_id": 0})</code></pre>
+        </section>
+
+        <hr class="docs-divider">
+
+        <section id="grpc-api">
+          <h2>gRPC API Reference</h2>
+          <p>The <code>KrabnetService</code> exposes the following RPCs:</p>
+
+          <div class="api-method">
+            <h3>IngestEvent</h3>
+            <p>Ingest a single graph mutation event.</p>
+            <table class="api-table">
+              <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+              <tr><td>node_added</td><td>NodeAddedEvent</td><td>Add a node with node_id and type_id</td></tr>
+              <tr><td>node_removed</td><td>NodeRemovedEvent</td><td>Remove a node by node_id</td></tr>
+              <tr><td>edge_added</td><td>EdgeAddedEvent</td><td>Add an edge with edge_id, source, target, type_id</td></tr>
+              <tr><td>edge_removed</td><td>EdgeRemovedEvent</td><td>Remove an edge by edge_id, source, target</td></tr>
+              <tr><td>property_changed</td><td>PropertyChangedEvent</td><td>Update a property on a node</td></tr>
+            </table>
+            <p><strong>Returns:</strong> <code>epoch</code> (u64) &mdash; the event's sequence number</p>
+          </div>
+
+          <div class="api-method">
+            <h3>RegisterFrame</h3>
+            <p>Register a new materialized frame.</p>
+            <table class="api-table">
+              <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+              <tr><td>anchor_node_id</td><td>u64</td><td>The node to anchor the frame at</td></tr>
+              <tr><td>pattern</td><td>HopSpec[]</td><td>Sequence of hops defining the query</td></tr>
+              <tr><td>epoch</td><td>u64</td><td>Registration epoch</td></tr>
+            </table>
+            <p><strong>Returns:</strong> <code>frame_id</code> (u64)</p>
+          </div>
+
+          <div class="api-method">
+            <h3>QueryFrame</h3>
+            <p>Query a frame's current materialized paths.</p>
+            <table class="api-table">
+              <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+              <tr><td>frame_id</td><td>u64</td><td>Frame to query</td></tr>
+            </table>
+            <p><strong>Returns:</strong> <code>paths</code> &mdash; array of node ID sequences</p>
+          </div>
+
+          <div class="api-method">
+            <h3>SubscribeFrame</h3>
+            <p>Subscribe to real-time updates for a frame. Server-streaming RPC.</p>
+            <table class="api-table">
+              <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+              <tr><td>frame_id</td><td>u64</td><td>Frame to subscribe to</td></tr>
+            </table>
+            <p><strong>Returns:</strong> Stream of <code>FrameUpdate</code> with paths and epoch</p>
+          </div>
+
+          <div class="api-method">
+            <h3>ListFrames</h3>
+            <p>List all registered frames with metadata.</p>
+            <p><strong>Returns:</strong> Array of <code>FrameInfo</code> (id, anchor, tier, tuple_count)</p>
+          </div>
+
+          <div class="api-method">
+            <h3>EvictFrame</h3>
+            <p>Remove a frame from the engine.</p>
+            <table class="api-table">
+              <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+              <tr><td>frame_id</td><td>u64</td><td>Frame to evict</td></tr>
+            </table>
+            <p><strong>Returns:</strong> <code>success</code> (bool)</p>
+          </div>
+
+          <div class="api-method">
+            <h3>GetStats</h3>
+            <p>Get engine statistics including node/edge/frame counts, tier distribution, and compaction metrics.</p>
+          </div>
+        </section>
+
+        <hr class="docs-divider">
+
+        <section id="mcp-tools">
+          <h2>MCP Tools Reference</h2>
+
+          <div class="api-method">
+            <h3>krabnet_ingest</h3>
+            <p>Ingest a graph mutation event.</p>
+            <table class="api-table">
+              <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              <tr><td>event_type</td><td>string</td><td>Yes</td><td>"NodeAdded", "NodeRemoved", "EdgeAdded", "EdgeRemoved", "PropertyChanged"</td></tr>
+              <tr><td>node_id</td><td>integer</td><td>Varies</td><td>Node ID (for node and property events)</td></tr>
+              <tr><td>type_id</td><td>integer</td><td>Varies</td><td>Type ID (for NodeAdded, EdgeAdded)</td></tr>
+              <tr><td>edge_id</td><td>integer</td><td>Varies</td><td>Edge ID (for edge events)</td></tr>
+              <tr><td>source</td><td>integer</td><td>Varies</td><td>Source node (for edge events)</td></tr>
+              <tr><td>target</td><td>integer</td><td>Varies</td><td>Target node (for edge events)</td></tr>
+              <tr><td>key</td><td>integer</td><td>Varies</td><td>Property key (for PropertyChanged)</td></tr>
+              <tr><td>value_type</td><td>string</td><td>Varies</td><td>"Integer", "Float", "Text", "Boolean"</td></tr>
+              <tr><td>value</td><td>any</td><td>Varies</td><td>Property value</td></tr>
+            </table>
+          </div>
+
+          <div class="api-method">
+            <h3>krabnet_register_frame</h3>
+            <p>Register a maintained frame.</p>
+            <table class="api-table">
+              <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              <tr><td>anchor_node_id</td><td>integer</td><td>Yes</td><td>Anchor node for the frame</td></tr>
+              <tr><td>pattern</td><td>array</td><td>Yes</td><td>Hop specs: [{direction, edge_type?, target_type?}]</td></tr>
+              <tr><td>epoch</td><td>integer</td><td>Yes</td><td>Registration epoch</td></tr>
+            </table>
+          </div>
+
+          <div class="api-method">
+            <h3>krabnet_query_frame</h3>
+            <p>Query a frame's current results.</p>
+            <table class="api-table">
+              <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              <tr><td>frame_id</td><td>integer</td><td>Yes</td><td>Frame ID to query</td></tr>
+            </table>
+          </div>
+
+          <div class="api-method">
+            <h3>krabnet_register_template</h3>
+            <p>Register an automatic pattern template for emergent pattern detection.</p>
+            <table class="api-table">
+              <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              <tr><td>id</td><td>integer</td><td>Yes</td><td>Template ID</td></tr>
+              <tr><td>pattern</td><td>array</td><td>Yes</td><td>Hop specs for the pattern</td></tr>
+              <tr><td>threshold</td><td>number</td><td>Yes</td><td>Completion ratio for promotion (0.0&ndash;1.0)</td></tr>
+              <tr><td>max_candidates</td><td>integer</td><td>Yes</td><td>Maximum candidates per template</td></tr>
+              <tr><td>stale_window</td><td>integer</td><td>Yes</td><td>Epochs before pruning stale candidates</td></tr>
+            </table>
+          </div>
+
+          <div class="api-method">
+            <h3>krabnet_stats</h3>
+            <p>Get engine statistics. Takes no parameters.</p>
+            <p><strong>Returns:</strong> Node/edge/frame counts, tier distribution, tuple counts, compaction metrics.</p>
+          </div>
+        </section>
+
+        <hr class="docs-divider">
+
+        <section id="configuration">
+          <h2>Configuration</h2>
+
+          <h3>gRPC Server</h3>
+          <table class="api-table">
+            <tr><th>Environment Variable</th><th>Default</th><th>Description</th></tr>
+            <tr><td>ANTHROPIC_API_KEY</td><td>&mdash;</td><td>Enables LLM-powered analysis. Uses mock if unset.</td></tr>
+            <tr><td>KRABNET_LLM_MODEL</td><td>claude-sonnet-4-6</td><td>Model for deep analysis</td></tr>
+            <tr><td>KRABNET_LLM_MAX_TOKENS</td><td>1024</td><td>Max tokens for LLM responses</td></tr>
+          </table>
+
+          <h3>MCP Server</h3>
+          <table class="api-table">
+            <tr><th>Environment Variable</th><th>Default</th><th>Description</th></tr>
+            <tr><td>KRABNET_MCP_WAL</td><td>krabnet-mcp.wal</td><td>Path to write-ahead log file</td></tr>
+          </table>
+
+          <p>
+            Both servers persist state via write-ahead logging and automatically
+            replay on restart for crash recovery.
+          </p>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-inner">
+      <div class="footer-left">
+        <img src="krabnet_logo.png" alt="krabnet" width="20" height="20">
+        <span>krabnet</span>
+      </div>
+      <div class="footer-right">
+        <a href="docs.html">Docs</a>
+        <span class="footer-sep">&middot;</span>
+        <span>MIT License</span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
