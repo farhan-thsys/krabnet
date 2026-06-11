@@ -40,6 +40,8 @@ Modules are listed in compilation order. Each module depends only on modules lis
 | `mcp` | MCP JSON-RPC 2.0 server with 5 tools over stdio |
 | `tier3` | Tier 3 LLM integration with bounded channel and mock client |
 
+> **Status note:** Tier 3 LLM integration currently ships a mock client (`MockLlmClient`); real provider wiring is pending.
+
 ### Core Pipeline
 
 1. **Event ingestion** via ring buffer with monotonic epoch assignment
@@ -99,4 +101,4 @@ Enterprise-scale benchmarks exercise 100K nodes, 1M edges, and 500 frames to val
 
 ## License
 
-[TBD]
+MIT
