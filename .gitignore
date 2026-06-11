@@ -1,1 +1,4 @@
 /target
+.claude/
+.wrangler/
+FULL_PROJECT_SPEC.txt
